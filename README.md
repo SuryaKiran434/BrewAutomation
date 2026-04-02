@@ -4,15 +4,15 @@ Automated Homebrew, uv, and Python package updates on macOS with **hardened secu
 
 ## Features
 
-✅ **Daily package updates** (brew, casks, uv tools, Python libraries)
-✅ **Scheduled system restarts** (Tuesday & Thursday 9:00 AM)
-✅ **HTML email notifications** (success & failure with package details)
-✅ **Secure credential storage** (encrypted env vars, restricted permissions)
-✅ **Robust error handling** (visible failures, detailed logs, retry detection)
-✅ **Duplicate prevention** (lock files with timestamp-based expiration)
-✅ **Graceful degradation** (iTerm2 fallback to background execution)
-✅ **Manual triggers** (immediate updates/restarts with separate logging)
-✅ **Log rotation** (automatic 30-day retention for automation logs)
+- ✅ **Daily package updates** (brew, casks, uv tools, Python libraries)
+- ✅ **Scheduled system restarts** (Tuesday & Thursday 9:00 AM)
+- ✅ **HTML email notifications** (success & failure with package details)
+- ✅ **Secure credential storage** (encrypted env vars, restricted permissions)
+- ✅ **Robust error handling** (visible failures, detailed logs, retry detection)
+- ✅ **Duplicate prevention** (lock files with timestamp-based expiration)
+- ✅ **Graceful degradation** (iTerm2 fallback to background execution)
+- ✅ **Manual triggers** (immediate updates/restarts with separate logging)
+- ✅ **Log rotation** (automatic 30-day retention for automation logs)
 
 ---
 
