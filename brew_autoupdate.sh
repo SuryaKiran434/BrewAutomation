@@ -65,7 +65,7 @@ fi
 # ============================================================================
 
 attempt_iterm() {
-    osascript <<'EOF' 2>/dev/null
+    osascript <<EOF 2>/dev/null
 tell application "iTerm"
     activate
     set newWindow to (create window with default profile)
