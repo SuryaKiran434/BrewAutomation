@@ -6,7 +6,7 @@
     <string>com.suryakiran.restart</string>
     <key>ProgramArguments</key>
     <array>
-        <string>__HOME__/BrewAutomation/restart_script.sh</string>
+        <string>__HOME__/IdeaProjects/BrewAutomation/restart_script.sh</string>
     </array>
     <key>StartCalendarInterval</key>
     <array>
@@ -28,9 +28,9 @@
         </dict>
     </array>
     <key>StandardOutPath</key>
-    <string>__HOME__/BrewAutomation/restart_stdout.log</string>
+    <string>__HOME__/IdeaProjects/BrewAutomation/restart_stdout.log</string>
     <key>StandardErrorPath</key>
-    <string>__HOME__/BrewAutomation/restart_stderr.log</string>
+    <string>__HOME__/IdeaProjects/BrewAutomation/restart_stderr.log</string>
     <key>RunAtLoad</key>
     <false/>
 </dict>

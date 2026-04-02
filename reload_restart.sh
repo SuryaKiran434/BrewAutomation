@@ -1,13 +1,13 @@
 #!/bin/bash
 PLIST_NAME="com.suryakiran.restart.plist"
-SOURCE_PATH="$HOME/BrewAutomation/$PLIST_NAME"
+SOURCE_PATH="$HOME/IdeaProjects/BrewAutomation/$PLIST_NAME"
 DEST_PATH="/Library/LaunchDaemons/$PLIST_NAME"
 
 echo "Syncing and restarting Restart Automation..."
 
 # Enforce .env permissions (should be readable only by owner)
-if [ -f "$HOME/BrewAutomation/.env" ]; then
-    chmod 600 "$HOME/BrewAutomation/.env" || {
+if [ -f "$HOME/IdeaProjects/BrewAutomation/.env" ]; then
+    chmod 600 "$HOME/IdeaProjects/BrewAutomation/.env" || {
         echo "ERROR: Failed to set .env permissions. Installation aborted."
         exit 1
     }

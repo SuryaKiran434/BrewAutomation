@@ -16,7 +16,7 @@ done
 # SETUP: Paths, Config, Validation
 # ============================================================================
 
-BASE_DIR="$HOME/BrewAutomation"
+BASE_DIR="$HOME/IdeaProjects/BrewAutomation"
 TODAY=$(date "+%Y-%m-%d")
 TIMESTAMP=$(date)
 
