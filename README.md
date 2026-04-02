@@ -108,7 +108,7 @@ Brew update failed on 2026-04-01.
 Failed step: brew upgrade
 Exit code: 1
 
-See /Users/suryakiran/BrewAutomation/error.log for details.
+See ~/IdeaProjects/BrewAutomation/error.log for details.
 
 Next retry at 12:30 PM tomorrow.
 ```
@@ -119,8 +119,8 @@ Next retry at 12:30 PM tomorrow.
 
 ### 1. Clone/Copy to Home Directory
 ```bash
-git clone <repo> ~/BrewAutomation
-cd ~/BrewAutomation
+git clone <repo> ~/IdeaProjects/BrewAutomation
+cd ~/IdeaProjects/BrewAutomation
 chmod +x *.sh  # Make scripts executable
 ```
 
@@ -169,7 +169,7 @@ Should show:
 
 ### Trigger Brew Update
 ```bash
-~/BrewAutomation/bubu_executor.sh --manual
+~/IdeaProjects/BrewAutomation/bubu_executor.sh --manual
 ```
 - Runs immediately in iTerm2 (or background if iTerm2 unavailable)
 - Logs to separate `brew_update_manual.log` and `error_manual.log`
@@ -179,14 +179,14 @@ Should show:
 
 ### Trigger System Restart
 ```bash
-bash ~/BrewAutomation/restart_script.sh --manual
+bash ~/IdeaProjects/BrewAutomation/restart_script.sh --manual
 ```
 - Prompts: "System restart will occur in 3 seconds. Press Ctrl+C to cancel."
 - Logs to separate `restart_history_manual.log`
 - Sends email notification
 - **Use `--force` to skip the confirmation prompt:**
   ```bash
-  bash ~/BrewAutomation/restart_script.sh --manual --force
+  bash ~/IdeaProjects/BrewAutomation/restart_script.sh --manual --force
   ```
 
 ---
@@ -196,33 +196,33 @@ bash ~/BrewAutomation/restart_script.sh --manual
 ### Check Logs
 ```bash
 # Automated brew run
-tail -f ~/BrewAutomation/brew_update.log
+tail -f ~/IdeaProjects/BrewAutomation/brew_update.log
 
 # Manual brew run
-tail -f ~/BrewAutomation/brew_update_manual.log
+tail -f ~/IdeaProjects/BrewAutomation/brew_update_manual.log
 
 # Errors (automated)
-tail -f ~/BrewAutomation/error.log
+tail -f ~/IdeaProjects/BrewAutomation/error.log
 
 # Errors (manual)
-tail -f ~/BrewAutomation/error_manual.log
+tail -f ~/IdeaProjects/BrewAutomation/error_manual.log
 
 # Skipped runs
-tail -f ~/BrewAutomation/skips.log
+tail -f ~/IdeaProjects/BrewAutomation/skips.log
 
 # Restart history (automated)
-cat ~/BrewAutomation/restart_history.log
+cat ~/IdeaProjects/BrewAutomation/restart_history.log
 
 # Restart history (manual)
-cat ~/BrewAutomation/restart_history_manual.log
+cat ~/IdeaProjects/BrewAutomation/restart_history_manual.log
 
 # LaunchAgent system output
-tail -f ~/BrewAutomation/system_stderr.log
-tail -f ~/BrewAutomation/system_stdout.log
+tail -f ~/IdeaProjects/BrewAutomation/system_stderr.log
+tail -f ~/IdeaProjects/BrewAutomation/system_stdout.log
 
 # LaunchDaemon system output (restart)
-tail -f ~/BrewAutomation/restart_stdout.log
-tail -f ~/BrewAutomation/restart_stderr.log
+tail -f ~/IdeaProjects/BrewAutomation/restart_stdout.log
+tail -f ~/IdeaProjects/BrewAutomation/restart_stderr.log
 ```
 
 ### Check LaunchAgent Status
@@ -287,10 +287,10 @@ A healthy system shows:
 **Debug steps:**
 1. Check LaunchAgent is loaded: `launchctl list com.suryakiran.brewauto`
    - Should show `0` (loaded) or `1` (exited successfully)
-2. Check for errors: `tail ~/BrewAutomation/system_stderr.log`
+2. Check for errors: `tail ~/IdeaProjects/BrewAutomation/system_stderr.log`
 3. Check LaunchAgent environment: `launchctl getenv PATH` (verify it includes brew path)
 4. Reload the agent: `bash reload.sh`
-5. Test manually: `bash ~/BrewAutomation/bubu_executor.sh --manual`
+5. Test manually: `bash ~/IdeaProjects/BrewAutomation/bubu_executor.sh --manual`
 
 ### Emails not sending
 **Symptoms:** No email received on success/failure
@@ -304,11 +304,11 @@ A healthy system shows:
 3. Verify 2-Step Verification is enabled: https://myaccount.google.com/security
 4. Check for SMTP errors:
    ```bash
-   tail -50 ~/BrewAutomation/error.log | grep -i "smtp\|auth\|network"
+   tail -50 ~/IdeaProjects/BrewAutomation/error.log | grep -i "smtp\|auth\|network"
    ```
 5. Test email sending:
    ```bash
-   python3 ~/BrewAutomation/notify.py \
+   python3 ~/IdeaProjects/BrewAutomation/notify.py \
      "Test Email" \
      "This is a test." \
      "" \
@@ -338,9 +338,9 @@ A healthy system shows:
 **Symptoms:** Manual trigger returns immediately without running
 
 **Debug steps:**
-1. Check if lock file exists: `ls -la ~/BrewAutomation/brew_update.lock`
-2. If it does, check the PID: `cat ~/BrewAutomation/brew_update.lock`
-3. If that process doesn't exist, remove the stale lock: `rm ~/BrewAutomation/brew_update.lock`
+1. Check if lock file exists: `ls -la ~/IdeaProjects/BrewAutomation/brew_update.lock`
+2. If it does, check the PID: `cat ~/IdeaProjects/BrewAutomation/brew_update.lock`
+3. If that process doesn't exist, remove the stale lock: `rm ~/IdeaProjects/BrewAutomation/brew_update.lock`
 
 ### System restart confirmation appears even on scheduled run
 **Symptoms:** 3-second countdown appears during scheduled 12:30 PM run
@@ -363,7 +363,7 @@ launchctl unload ~/Library/LaunchAgents/com.suryakiran.brewauto.plist
 sudo launchctl unload /Library/LaunchDaemons/com.suryakiran.restart.plist
 
 # Remove the project directory (optional)
-rm -rf ~/BrewAutomation
+rm -rf ~/IdeaProjects/BrewAutomation
 ```
 
 ---
