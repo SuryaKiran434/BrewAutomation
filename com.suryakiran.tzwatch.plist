@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.suryakiran.tzwatch</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>__HOME__/IdeaProjects/BrewAutomation/tzreload.sh</string>
+    </array>
+    <key>WatchPaths</key>
+    <array>
+        <string>/private/etc/localtime</string>
+    </array>
+    <key>StandardOutPath</key>
+    <string>__HOME__/IdeaProjects/BrewAutomation/system_stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/IdeaProjects/BrewAutomation/system_stderr.log</string>
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>

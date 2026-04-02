@@ -3,6 +3,10 @@ PLIST_NAME="com.suryakiran.brewauto.plist"
 SOURCE_PATH="$HOME/IdeaProjects/BrewAutomation/$PLIST_NAME"
 DEST_PATH="$HOME/Library/LaunchAgents/$PLIST_NAME"
 
+TZWATCH_PLIST_NAME="com.suryakiran.tzwatch.plist"
+TZWATCH_SOURCE="$HOME/IdeaProjects/BrewAutomation/$TZWATCH_PLIST_NAME"
+TZWATCH_DEST="$HOME/Library/LaunchAgents/$TZWATCH_PLIST_NAME"
+
 echo "Syncing and restarting Brew Automation..."
 
 # Enforce .env permissions (should be readable only by owner)
@@ -31,5 +35,18 @@ if ! launchctl load "$DEST_PATH"; then
 fi
 
 echo "✓ LaunchAgent installed and loaded"
+
+# Install and load the timezone watcher
+launchctl unload "$TZWATCH_DEST" 2>/dev/null || true
+chmod +x "$HOME/IdeaProjects/BrewAutomation/tzreload.sh"
+if ! sed "s|__HOME__|$HOME|g" "$TZWATCH_SOURCE" > "$TZWATCH_DEST"; then
+    echo "ERROR: Failed to install tzwatch plist."
+    exit 1
+fi
+if ! launchctl load "$TZWATCH_DEST"; then
+    echo "ERROR: Failed to load tzwatch LaunchAgent."
+    exit 1
+fi
+echo "✓ Timezone watcher installed and loaded"
 echo "Done! The new schedule and logic are now active."
 
