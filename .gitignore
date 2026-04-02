@@ -1,0 +1,26 @@
+# Credentials
+.env
+
+# Logs
+*.log
+*.log.tmp
+
+# Lock file
+brew_update.lock
+
+# macOS
+.DS_Store
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
