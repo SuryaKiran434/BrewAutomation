@@ -19,7 +19,7 @@ if [ -f "$HOME/IdeaProjects/BrewAutomation/.env" ]; then
 fi
 
 # Unload the old one
-launchctl unload "$DEST_PATH" 2>/dev/null || true
+launchctl bootout gui/$(id -u) "$DEST_PATH" 2>/dev/null || true
 
 # Substitute __HOME__ placeholder with the actual home directory and install
 if ! sed "s|__HOME__|$HOME|g" "$SOURCE_PATH" > "$DEST_PATH"; then
@@ -28,7 +28,7 @@ if ! sed "s|__HOME__|$HOME|g" "$SOURCE_PATH" > "$DEST_PATH"; then
 fi
 
 # Load the new version
-if ! launchctl load "$DEST_PATH"; then
+if ! launchctl bootstrap gui/$(id -u) "$DEST_PATH"; then
     echo "ERROR: Failed to load LaunchAgent. Check plist syntax:"
     plutil -lint "$DEST_PATH"
     exit 1
@@ -37,13 +37,13 @@ fi
 echo "✓ LaunchAgent installed and loaded"
 
 # Install and load the timezone watcher
-launchctl unload "$TZWATCH_DEST" 2>/dev/null || true
+launchctl bootout gui/$(id -u) "$TZWATCH_DEST" 2>/dev/null || true
 chmod +x "$HOME/IdeaProjects/BrewAutomation/tzreload.sh"
 if ! sed "s|__HOME__|$HOME|g" "$TZWATCH_SOURCE" > "$TZWATCH_DEST"; then
     echo "ERROR: Failed to install tzwatch plist."
     exit 1
 fi
-if ! launchctl load "$TZWATCH_DEST"; then
+if ! launchctl bootstrap gui/$(id -u) "$TZWATCH_DEST"; then
     echo "ERROR: Failed to load tzwatch LaunchAgent."
     exit 1
 fi

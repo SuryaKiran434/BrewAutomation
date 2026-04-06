@@ -13,8 +13,8 @@ if [ "$current_tz" != "$last_tz" ]; then
     echo "$current_tz" > "$STATEFILE"
     if [ -n "$last_tz" ]; then
         # Only reload if we had a previous known timezone (skip first run)
-        launchctl unload "$PLIST" 2>/dev/null || true
-        launchctl load "$PLIST"
+        launchctl bootout gui/$(id -u) "$PLIST" 2>/dev/null || true
+        launchctl bootstrap gui/$(id -u) "$PLIST"
         echo "[$(date)] Timezone changed: $last_tz → $current_tz — reloaded $PLIST" >> "$LOG"
     else
         echo "[$(date)] Timezone initialized: $current_tz" >> "$LOG"
