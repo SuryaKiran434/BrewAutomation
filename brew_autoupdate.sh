@@ -18,7 +18,17 @@ mkdir -p "$BASE_DIR"
 touch "$LOG_FILE" "$SKIP_LOG"
 
 # ============================================================================
-# CHECK 1: Already completed today?
+# CHECK 1: Too early to run? (only run at or after 12:30 PM)
+# ============================================================================
+
+CURRENT_HOUR=$(date "+%H")
+CURRENT_MIN=$(date "+%M")
+if [ "$CURRENT_HOUR" -lt 12 ] || { [ "$CURRENT_HOUR" -eq 12 ] && [ "$CURRENT_MIN" -lt 30 ]; }; then
+    exit 0
+fi
+
+# ============================================================================
+# CHECK 2: Already completed today?
 # ============================================================================
 
 if grep -q "Running bubu has been completed on $TODAY" "$LOG_FILE"; then
