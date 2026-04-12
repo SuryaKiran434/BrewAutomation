@@ -6,11 +6,17 @@ STATEFILE="$HOME/.brewauto_timezone"
 PLIST="$HOME/Library/LaunchAgents/com.suryakiran.brewauto.plist"
 LOG="$HOME/IdeaProjects/BrewAutomation/system_stdout.log"
 
-current_tz=$(readlink /private/etc/localtime | sed 's|.*/zoneinfo/||')
+TZ_LINK=$(readlink /private/etc/localtime 2>/dev/null) || exit 0
+current_tz=$(printf '%s' "$TZ_LINK" | sed 's|.*/zoneinfo/||')
+[ -z "$current_tz" ] && exit 0
+# Reject unexpected characters in timezone string
+case "$current_tz" in
+    *[!A-Za-z0-9/_+-]*) exit 0 ;;
+esac
 last_tz=$(cat "$STATEFILE" 2>/dev/null)
 
 if [ "$current_tz" != "$last_tz" ]; then
-    echo "$current_tz" > "$STATEFILE"
+    printf '%s\n' "$current_tz" > "${STATEFILE}.tmp" && mv "${STATEFILE}.tmp" "$STATEFILE"
     if [ -n "$last_tz" ]; then
         # Only reload if we had a previous known timezone (skip first run)
         launchctl bootout gui/$(id -u) "$PLIST" 2>/dev/null || true

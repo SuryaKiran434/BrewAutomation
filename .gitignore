@@ -5,8 +5,9 @@
 *.log
 *.log.tmp
 
-# Lock file
+# Lock file and atomic lock directory
 brew_update.lock
+brew_update.lock.d/
 
 # macOS
 .DS_Store

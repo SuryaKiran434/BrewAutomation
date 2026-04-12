@@ -36,13 +36,16 @@ else
 fi
 
 LOCK_FILE="$BASE_DIR/brew_update.lock"
+LOCK_DIR="${LOCK_FILE}.d"
 LOCK_TIMEOUT=3600  # 1 hour
 
 # Initialize logging
 mkdir -p "$BASE_DIR"
 touch "$LOG_FILE" "$ERROR_LOG"
+chmod 600 "$LOG_FILE" "$ERROR_LOG"
 if [ -n "$SKIP_LOG" ]; then
     touch "$SKIP_LOG"
+    chmod 600 "$SKIP_LOG"
 fi
 
 # ============================================================================
@@ -128,11 +131,19 @@ generate_upgrade_summary() {
 
     while IFS= read -r line; do
         if [ -z "$line" ]; then continue; fi
-        local package=$(echo "$line" | awk '{print $1}')
-        local old_ver=$(echo "$line" | awk '{print $2}')
-        local new_ver=$(echo "$line" | awk '{print $4}')
+        local field_count
+        field_count=$(echo "$line" | awk '{print NF}')
+        [ "$field_count" -lt 4 ] && continue
+        local package old_ver new_ver
+        package=$(echo "$line" | awk '{print $1}')
+        old_ver=$(echo "$line" | awk '{print $2}')
+        new_ver=$(echo "$line" | awk '{print $4}')
         [ -z "$old_ver" ] && continue
         [ -z "$new_ver" ] && continue
+        # Escape for safe HTML embedding
+        package=$(printf '%s' "$package" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g' -e "s/'/\&#39;/g")
+        old_ver=$(printf '%s' "$old_ver" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g' -e "s/'/\&#39;/g")
+        new_ver=$(printf '%s' "$new_ver" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g' -e "s/'/\&#39;/g")
 
         echo "<tr style='border-bottom: 1px solid #eee;'>"
         echo "<td style='padding: 10px; font-family: monospace; font-weight: 500;'>$package</td>"
@@ -233,7 +244,11 @@ if [ "$MANUAL" = true ]; then
     fi
 fi
 
-# Write lock file with PID and timestamp
+# Atomically acquire lock using mkdir to prevent race conditions
+if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+    echo "[$(date)] Skip: Another instance is acquiring the lock" >> "$ERROR_LOG"
+    exit 0
+fi
 echo "$$ $(date +%s)" > "$LOCK_FILE"
 
 # ============================================================================
@@ -245,6 +260,7 @@ FAILED_STEP="initializing"
 cleanup() {
     local exit_code=$?
     rm -f "$LOCK_FILE"
+    rm -rf "$LOCK_DIR"
 
     if [ $exit_code -ne 0 ]; then
         local error_msg="[$(date)] ERROR: Failed during '$FAILED_STEP' (exit code $exit_code)"
@@ -256,22 +272,29 @@ cleanup() {
 
         # Send error email with HTML
         if [ -n "$PYTHON_PATH" ] && [ -x "$PYTHON_PATH" ] && [ -n "$SENDER_EMAIL" ] && [ -n "$SENDER_APP_PASSWORD" ] && [ -n "$RECIPIENT_EMAIL" ]; then
-            local error_summary="<div style='color: #333; padding: 15px; background: #f9f9f9; border-left: 3px solid #f8d7da; border-radius: 3px;'><strong>Failed step:</strong> $FAILED_STEP<br><strong>Exit code:</strong> $exit_code<br><strong>See error log for details.</strong></div>"
+            local failed_step_escaped
+            failed_step_escaped=$(printf '%s' "$FAILED_STEP" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g' -e "s/'/\&#39;/g")
+            local error_body="Brew update failed on $TODAY during step: $FAILED_STEP (exit code $exit_code). See logs for details."
+            local error_summary="<div style='color: #333; padding: 15px; background: #f9f9f9; border-left: 3px solid #f8d7da; border-radius: 3px;'><strong>Failed step:</strong> $failed_step_escaped<br><strong>Exit code:</strong> $exit_code<br><strong>See error log for details.</strong></div>"
 
             local html_error=$(generate_html_email "Brew Update Failed" "failed" "$error_summary")
             html_error="${html_error//TITLE_PLACEHOLDER/Brew Update Failed}"
             html_error="${html_error//STATUS_BADGE/✗ Failed}"
             html_error="${html_error//STATUS_CLASS/failed}"
-            html_error="${html_error//DATE_PLACEHOLDER/$TODAY}"
-            html_error="${html_error//RUN_TYPE_PLACEHOLDER/$([ "$MANUAL" = true ] && echo "Manual" || echo "Automated")}"
-            html_error="${html_error//TIME_PLACEHOLDER/$(date '+%H:%M:%S %Z')}"
+            local esc_date esc_run_type esc_time
+            esc_date=$(printf '%s' "$TODAY" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g')
+            esc_run_type=$([ "$MANUAL" = true ] && echo "Manual" || echo "Automated")
+            esc_time=$(date '+%H:%M:%S %Z' | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g')
+            html_error="${html_error//DATE_PLACEHOLDER/$esc_date}"
+            html_error="${html_error//RUN_TYPE_PLACEHOLDER/$esc_run_type}"
+            html_error="${html_error//TIME_PLACEHOLDER/$esc_time}"
             html_error="${html_error//UPGRADE_SUMMARY_PLACEHOLDER/$error_summary}"
 
+            SENDER_EMAIL="$SENDER_EMAIL" SENDER_APP_PASSWORD="$SENDER_APP_PASSWORD" RECIPIENT_EMAIL="$RECIPIENT_EMAIL" \
             "$PYTHON_PATH" "$BASE_DIR/notify.py" \
                 "$EMAIL_SUBJECT_FAIL" \
                 "$error_body" \
-                "$html_error" \
-                "$SENDER_EMAIL" "$SENDER_APP_PASSWORD" "$RECIPIENT_EMAIL"
+                "$html_error"
             if [ $? -ne 0 ]; then
                 echo "[$(date)] WARNING: Failed to send error email" >> "$ERROR_LOG"
             fi
@@ -292,7 +315,8 @@ exec 2> >(tee -a "$ERROR_LOG" >&2)
 # EXECUTION: Brew, UV, Python upgrades
 # ============================================================================
 
-UPGRADE_TEMP=$(mktemp) && chmod 600 "$UPGRADE_TEMP"
+UPGRADE_TEMP=$(mktemp) || { echo "[$(date)] ERROR: Failed to create temp file" >&2; exit 1; }
+chmod 600 "$UPGRADE_TEMP"
 
 FAILED_STEP="brew outdated"
 echo "--- LOGGING START: $TIMESTAMP ---" >> "$LOG_FILE"
@@ -322,7 +346,7 @@ if [ -n "$PYTHON_PATH" ] && [ -x "$PYTHON_PATH" ]; then
             echo "--- Updating Python Libs ---"
             PKGS=$("$UV" pip list --python "$PYENV_PYTHON" --format freeze 2>/dev/null | cut -d= -f1 || true)
             if [ -n "$PKGS" ]; then
-                echo "$PKGS" | xargs "$UV" pip install --upgrade --python "$PYENV_PYTHON" 2>&1 | tee -a "$UPGRADE_TEMP" >/dev/null
+                echo "$PKGS" | tr '\n' '\0' | xargs -0 "$UV" pip install --upgrade --python "$PYENV_PYTHON" 2>&1 | tee -a "$UPGRADE_TEMP" >/dev/null
             fi
         else
             echo "[$(date)] WARNING: pyenv python not found, skipping pip upgrades" >> "$LOG_FILE"
@@ -353,16 +377,19 @@ $([ "$MANUAL" = true ] && echo "This was a manual run." || echo "")"
     html_body="${html_body//TITLE_PLACEHOLDER/Brew Update Complete}"
     html_body="${html_body//STATUS_BADGE/✓ Completed Successfully}"
     html_body="${html_body//STATUS_CLASS/success}"
-    html_body="${html_body//DATE_PLACEHOLDER/$TODAY}"
-    html_body="${html_body//RUN_TYPE_PLACEHOLDER/$([ "$MANUAL" = true ] && echo "Manual" || echo "Automated")}"
-    html_body="${html_body//TIME_PLACEHOLDER/$(date '+%H:%M:%S %Z')}"
+    esc_date=$(printf '%s' "$TODAY" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g')
+    esc_run_type=$([ "$MANUAL" = true ] && echo "Manual" || echo "Automated")
+    esc_time=$(date '+%H:%M:%S %Z' | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g')
+    html_body="${html_body//DATE_PLACEHOLDER/$esc_date}"
+    html_body="${html_body//RUN_TYPE_PLACEHOLDER/$esc_run_type}"
+    html_body="${html_body//TIME_PLACEHOLDER/$esc_time}"
     html_body="${html_body//UPGRADE_SUMMARY_PLACEHOLDER/$UPGRADE_SUMMARY}"
 
+    SENDER_EMAIL="$SENDER_EMAIL" SENDER_APP_PASSWORD="$SENDER_APP_PASSWORD" RECIPIENT_EMAIL="$RECIPIENT_EMAIL" \
     "$PYTHON_PATH" "$BASE_DIR/notify.py" \
         "$EMAIL_SUBJECT_SUCCESS" \
         "$success_body" \
-        "$html_body" \
-        "$SENDER_EMAIL" "$SENDER_APP_PASSWORD" "$RECIPIENT_EMAIL"
+        "$html_body"
     if [ $? -ne 0 ]; then
         echo "[$(date)] WARNING: Failed to send success email" >> "$LOG_FILE"
     fi

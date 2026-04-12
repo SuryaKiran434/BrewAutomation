@@ -6,6 +6,7 @@
     <string>com.suryakiran.restart</string>
     <key>ProgramArguments</key>
     <array>
+        <string>/bin/bash</string>
         <string>__HOME__/IdeaProjects/BrewAutomation/restart_script.sh</string>
     </array>
     <key>StartCalendarInterval</key>

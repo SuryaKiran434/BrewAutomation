@@ -18,7 +18,7 @@ def load_env(path: Path) -> None:
             line = line.strip()
             if line and not line.startswith("#") and "=" in line:
                 key, _, value = line.partition("=")
-                os.environ.setdefault(key.strip(), value.strip())
+                os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
 
 
 def send(subject: str, body: str, html_body: str = "",

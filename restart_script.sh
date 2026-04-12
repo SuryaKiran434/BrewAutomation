@@ -16,9 +16,9 @@ SENDER_EMAIL=""
 SENDER_APP_PASSWORD=""
 RECIPIENT_EMAIL=""
 if [ -f "$BASE_DIR/.env" ]; then
-    SENDER_EMAIL=$(grep "^SENDER_EMAIL=" "$BASE_DIR/.env" | cut -d= -f2 | tr -d '"')
-    SENDER_APP_PASSWORD=$(grep "^SENDER_APP_PASSWORD=" "$BASE_DIR/.env" | cut -d= -f2 | tr -d '"')
-    RECIPIENT_EMAIL=$(grep "^RECIPIENT_EMAIL=" "$BASE_DIR/.env" | cut -d= -f2 | tr -d '"')
+    SENDER_EMAIL=$(grep "^SENDER_EMAIL=" "$BASE_DIR/.env" 2>/dev/null | cut -d= -f2 | tr -d '"' || true)
+    SENDER_APP_PASSWORD=$(grep "^SENDER_APP_PASSWORD=" "$BASE_DIR/.env" 2>/dev/null | cut -d= -f2 | tr -d '"' || true)
+    RECIPIENT_EMAIL=$(grep "^RECIPIENT_EMAIL=" "$BASE_DIR/.env" 2>/dev/null | cut -d= -f2 | tr -d '"' || true)
 fi
 
 TODAY=$(date "+%Y-%m-%d")
@@ -49,13 +49,14 @@ fi
 # Log the restart
 echo "The system restarted on $TIMESTAMP" >> "$HISTORY_LOG"
 
-# Send email notification (pass credentials as function arguments, not via environment)
+# Send email notification (credentials passed via environment, not command-line arguments)
 if [ -n "$PYTHON_PATH" ] && [ -x "$PYTHON_PATH" ]; then
+    SENDER_EMAIL="$SENDER_EMAIL" SENDER_APP_PASSWORD="$SENDER_APP_PASSWORD" RECIPIENT_EMAIL="$RECIPIENT_EMAIL" \
     "$PYTHON_PATH" "$BASE_DIR/notify.py" \
         "$EMAIL_SUBJECT" \
         "$(printf 'System restart initiated on %s.\n\n%s' \
             "$TODAY" "$([ "$MANUAL" = true ] && echo 'This was a manual trigger.' || echo 'This was a scheduled restart.')")" \
-        "$SENDER_EMAIL" "$SENDER_APP_PASSWORD" "$RECIPIENT_EMAIL" || true
+        "" || true
 fi
 
 # Restart the system

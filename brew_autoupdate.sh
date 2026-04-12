@@ -1,4 +1,5 @@
 #!/bin/bash
+set -e
 
 # ============================================================================
 # BrewAutomation Guard: Prevents duplicate runs and launches executor
@@ -47,6 +48,7 @@ cleanup_stale_lock() {
     # Check if lock is stale (older than timeout)
     CURRENT_TIME=$(date +%s)
     LOCK_AGE=$((CURRENT_TIME - LOCK_TIME))
+    [ "$LOCK_AGE" -lt 0 ] && LOCK_AGE=0
     if [ "$LOCK_AGE" -gt "$LOCK_TIMEOUT" ]; then
         echo "[$TIMESTAMP] Note: Removed stale lock file (age: ${LOCK_AGE}s)." >> "$SKIP_LOG"
         rm -f "$LOCK_FILE"
@@ -65,12 +67,14 @@ fi
 # ============================================================================
 
 attempt_iterm() {
+    local script_path
+    script_path=$(printf '%s' "$BASE_DIR/bubu_executor.sh" | sed 's/\\/\\\\/g; s/"/\\"/g')
     osascript <<EOF 2>/dev/null
 tell application "iTerm"
     activate
     set newWindow to (create window with default profile)
     tell current session of newWindow
-        write text "$BASE_DIR/bubu_executor.sh"
+        write text "$script_path"
     end tell
 end tell
 EOF
@@ -83,6 +87,6 @@ if attempt_iterm; then
 fi
 
 # Fallback: Run in background if iTerm2 fails or is not available
-echo "[$TIMESTAMP] iTerm2 unavailable, running in background..." >> "$SKIP_LOG"
-"$BASE_DIR/bubu_executor.sh" > /dev/null 2>&1 &
+echo "[$TIMESTAMP] iTerm2 unavailable or failed (exit code $?), running in background..." >> "$SKIP_LOG"
+"$BASE_DIR/bubu_executor.sh" >> "$BASE_DIR/brew_update_background.log" 2>&1 &
 exit 0

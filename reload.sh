@@ -1,4 +1,5 @@
 #!/bin/bash
+set -e
 PLIST_NAME="com.suryakiran.brewauto.plist"
 SOURCE_PATH="$HOME/IdeaProjects/BrewAutomation/$PLIST_NAME"
 DEST_PATH="$HOME/Library/LaunchAgents/$PLIST_NAME"

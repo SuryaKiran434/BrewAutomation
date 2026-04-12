@@ -1,4 +1,5 @@
 #!/bin/bash
+set -e
 PLIST_NAME="com.suryakiran.restart.plist"
 SOURCE_PATH="$HOME/IdeaProjects/BrewAutomation/$PLIST_NAME"
 DEST_PATH="/Library/LaunchDaemons/$PLIST_NAME"
@@ -32,6 +33,12 @@ if ! sudo chmod 644 "$DEST_PATH"; then
     echo "ERROR: Failed to set plist permissions."
     exit 1
 fi
+
+# Pre-create log files with restricted permissions so launchd appends rather than creates them
+STDOUT_LOG="$HOME/IdeaProjects/BrewAutomation/restart_stdout.log"
+STDERR_LOG="$HOME/IdeaProjects/BrewAutomation/restart_stderr.log"
+sudo touch "$STDOUT_LOG" "$STDERR_LOG"
+sudo chmod 600 "$STDOUT_LOG" "$STDERR_LOG"
 
 # Load the new version
 if ! sudo launchctl load "$DEST_PATH"; then
