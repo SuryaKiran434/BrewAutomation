@@ -51,7 +51,8 @@ LaunchDaemon (plist, Tue & Thu at 9:00 AM)
 ### Credential Management
 - ✅ `.env` file permissions enforced to `600` (owner-only readable)
 - ✅ Email credentials **never exposed** to child processes (`set -a` removed)
-- ✅ Credentials passed as function arguments, not environment variables
+- ✅ Credentials passed via **scoped environment variables** to subprocess — invisible to `ps`/`/proc`
+- ✅ `notify.py` strips surrounding quotes from `.env` values before use
 - ✅ SMTP error messages don't leak credentials or sensitive info
 
 ### Error Handling
@@ -64,8 +65,9 @@ LaunchDaemon (plist, Tue & Thu at 9:00 AM)
 ### Lock File Safety
 - ✅ Lock files include timestamp-based expiration (1-hour timeout)
 - ✅ PID verification (prevent stale process detection)
-- ✅ Atomic lock creation and cleanup
+- ✅ Atomic lock creation via `mkdir` (race-condition-free)
 - ✅ Rate limiting for manual triggers (prevents duplicate execution)
+- ✅ Clock skew protection (negative lock age clamped to zero)
 
 ### Tool Validation
 - ✅ Brew and uv paths validated early (before traps/logging)
@@ -77,6 +79,7 @@ LaunchDaemon (plist, Tue & Thu at 9:00 AM)
 - ✅ Automated logs rotate to keep last 30 days (completion markers only)
 - ✅ Manual logs rotate to keep last 500 lines (separate from automation)
 - ✅ Error logs cleared on successful automation runs
+- ✅ All log files created with `600` permissions (owner-only readable)
 - ✅ Temporary files created with `600` permissions
 - ✅ All timestamps recorded for audit trail
 
@@ -88,8 +91,9 @@ Both automations send **styled HTML emails** on success and failure with:
 
 - **Status badge** (✓ Success / ✗ Failed) with visual indicators
 - **Metadata** (Run type, date, timestamp, duration)
-- **Skipped upgrades** (tools not found, Python unavailable, etc.)
+- **Package upgrade table** (package name, old version → new version)
 - **Plain text fallback** for email clients that don't support HTML
+- **Fully HTML-escaped output** (all 5 special chars including `'`) — no injection possible
 - **Proper error messages** without credential leakage
 
 ### Success Example
@@ -254,10 +258,13 @@ A healthy system shows:
 | `error.log` | Cleared on success, preserved on failure | Current failure or empty |
 | `error_manual.log` | Line-based (last 500 lines) | Latest 500 lines (~50 runs) |
 | `skips.log` | Line-based (last 100 lines) | Latest 100 lines (~30-50 days) |
+| `brew_update_background.log` | iTerm2 fallback output (no rotation) | Unbounded |
 | `system_stderr.log` | LaunchAgent output (no rotation) | Unbounded |
 | `system_stdout.log` | LaunchAgent output (no rotation) | Unbounded |
 | `restart_stdout.log` | LaunchDaemon output (no rotation) | Unbounded |
 | `restart_stderr.log` | LaunchDaemon output (no rotation) | Unbounded |
+
+All log files are created with `600` permissions (owner-only readable).
 
 ---
 
@@ -268,13 +275,15 @@ A healthy system shows:
 | `brew_autoupdate.sh` | Guard script — checks for duplicates, manages lock file, launches executor |
 | `bubu_executor.sh` | Executor script — runs all upgrades (brew, uv, python) with error handling |
 | `restart_script.sh` | System restart — logs and sends email notification, with confirmation prompt |
+| `tzreload.sh` | Timezone watcher — reloads LaunchAgent when system timezone changes |
 | `notify.py` | Email sender — sends HTML/plain text emails via Gmail SMTP |
 | `com.suryakiran.brewauto.plist` | LaunchAgent definition (brew updates, daily 12:30 PM) |
 | `com.suryakiran.restart.plist` | LaunchDaemon definition (restart, Tue/Thu 9:00 AM) |
-| `reload.sh` | Installer — deploys brew LaunchAgent, enforces permissions |
+| `com.suryakiran.tzwatch.plist` | LaunchAgent definition (timezone watcher, polls every 5 min) |
+| `reload.sh` | Installer — deploys brew LaunchAgent and tzwatch, enforces permissions |
 | `reload_restart.sh` | Installer — deploys restart LaunchDaemon, enforces permissions |
 | `.env` | Credentials (gitignored) — Gmail & tool paths |
-| `.gitignore` | Git exclusions — credentials, logs, IDE files |
+| `.gitignore` | Git exclusions — credentials, logs, lock directory, IDE files |
 | `README.md` | This file |
 
 ---
@@ -306,15 +315,9 @@ A healthy system shows:
    ```bash
    tail -50 ~/IdeaProjects/BrewAutomation/error.log | grep -i "smtp\|auth\|network"
    ```
-5. Test email sending:
+5. Test email sending (credentials loaded from `.env` automatically):
    ```bash
-   python3 ~/IdeaProjects/BrewAutomation/notify.py \
-     "Test Email" \
-     "This is a test." \
-     "" \
-     "$(grep ^SENDER_EMAIL ~/.BrewAutomation/.env | cut -d= -f2 | tr -d '\"')" \
-     "$(grep ^SENDER_APP_PASSWORD ~/.BrewAutomation/.env | cut -d= -f2 | tr -d '\"')" \
-     "$(grep ^RECIPIENT_EMAIL ~/.BrewAutomation/.env | cut -d= -f2 | tr -d '\"')"
+   cd ~/IdeaProjects/BrewAutomation && python3 notify.py "Test Email" "This is a test." ""
    ```
 
 ### Tools not found (brew, uv, python)
@@ -340,7 +343,11 @@ A healthy system shows:
 **Debug steps:**
 1. Check if lock file exists: `ls -la ~/IdeaProjects/BrewAutomation/brew_update.lock`
 2. If it does, check the PID: `cat ~/IdeaProjects/BrewAutomation/brew_update.lock`
-3. If that process doesn't exist, remove the stale lock: `rm ~/IdeaProjects/BrewAutomation/brew_update.lock`
+3. If that process doesn't exist, remove the stale lock and lock directory:
+   ```bash
+   rm -f ~/IdeaProjects/BrewAutomation/brew_update.lock
+   rm -rf ~/IdeaProjects/BrewAutomation/brew_update.lock.d
+   ```
 
 ### System restart confirmation appears even on scheduled run
 **Symptoms:** 3-second countdown appears during scheduled 12:30 PM run
@@ -356,11 +363,12 @@ A healthy system shows:
 To disable and remove automations:
 
 ```bash
-# Unload brew automation
-launchctl unload ~/Library/LaunchAgents/com.suryakiran.brewauto.plist
+# Unload brew automation and timezone watcher
+launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.suryakiran.brewauto.plist
+launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.suryakiran.tzwatch.plist
 
 # Unload restart automation (needs sudo for LaunchDaemon)
-sudo launchctl unload /Library/LaunchDaemons/com.suryakiran.restart.plist
+sudo launchctl bootout system /Library/LaunchDaemons/com.suryakiran.restart.plist
 
 # Remove the project directory (optional)
 rm -rf ~/IdeaProjects/BrewAutomation
@@ -385,7 +393,31 @@ This project uses `$HOME` for all paths — works on any macOS user account afte
 
 ## Version History
 
-### v2.0 (Current - Security & Hardening Release)
+### v3.0 (Current — Comprehensive Security Hardening)
+- ✅ Credentials passed via scoped env vars — no longer visible in `ps` output
+- ✅ Fixed `notify.py` quote-stripping bug (SMTP auth was failing when loaded from `.env`)
+- ✅ Fixed missing `error_body` variable (error emails had blank plain-text body)
+- ✅ Fixed `/bin/bash` missing from restart LaunchDaemon plist (restarts were silently failing)
+- ✅ Fixed `notify.py` argument order in `restart_script.sh` (sender/password were shifted)
+- ✅ Full HTML escaping on all email output including single-quote (`&#39;`)
+- ✅ HTML-escaped date, time, and run-type fields in email templates
+- ✅ Atomic lock acquisition via `mkdir` (race-condition-free)
+- ✅ Atomic timezone state file write via `tmp → mv`
+- ✅ Timezone string format validated before use
+- ✅ `|| true` error handling on all `.env` grep calls in `restart_script.sh`
+- ✅ `xargs -0` with null-delimited input for pip package names
+- ✅ All log files created with `600` permissions (owner-only)
+- ✅ Clock skew protection in lock age calculation
+- ✅ `mktemp` result validated before use
+- ✅ `awk` field count guard before package name extraction
+- ✅ `$BASE_DIR` path escaped before osascript heredoc embedding
+- ✅ Background fallback logs to `brew_update_background.log` instead of `/dev/null`
+- ✅ `set -e` added to `brew_autoupdate.sh`, `reload.sh`, `reload_restart.sh`
+- ✅ Restart log files pre-created at `600` in `reload_restart.sh`
+- ✅ `brew_update.lock.d/` added to `.gitignore`
+- ✅ Deprecated `launchctl unload` replaced with `bootout` throughout
+
+### v2.0 (Security & Hardening Release)
 - ✅ Added confirmation prompt to system restarts (prevent accidental data loss)
 - ✅ Fixed credential exposure (no more `set -a`)
 - ✅ Added stdout/stderr logging to LaunchDaemon
