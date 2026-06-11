@@ -328,10 +328,18 @@ echo "--- Updating Homebrew ---"
 "$BREW" update 2>&1 | tee -a "$UPGRADE_TEMP" >/dev/null
 
 FAILED_STEP="brew upgrade"
-"$BREW" upgrade 2>&1 | tee -a "$UPGRADE_TEMP" >/dev/null
+"$BREW" upgrade --formula 2>&1 | tee -a "$UPGRADE_TEMP" >/dev/null
+
+# Casks requiring sudo (privileged helpers, system extensions) are skipped here
+# so the run never blocks on an interactive password prompt. Update via the
+# app's own auto-updater or manually.
+SKIP_CASKS="docker-desktop"
 
 FAILED_STEP="brew upgrade --cask"
-"$BREW" upgrade --cask 2>&1 | tee -a "$UPGRADE_TEMP" >/dev/null
+CASK_TARGETS=$("$BREW" outdated --cask --quiet 2>/dev/null | grep -vFx "$SKIP_CASKS" || true)
+if [ -n "$CASK_TARGETS" ]; then
+    echo "$CASK_TARGETS" | xargs "$BREW" upgrade --cask 2>&1 | tee -a "$UPGRADE_TEMP" >/dev/null
+fi
 
 FAILED_STEP="uv tool upgrade"
 echo "--- Updating UV Tools ---"
