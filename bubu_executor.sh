@@ -71,6 +71,13 @@ fi
 BREW="${BREW:-/opt/homebrew/bin/brew}"
 UV="${UV:-/opt/homebrew/bin/uv}"
 
+# Homebrew 6.0 (April 2026) changed the default so `brew upgrade` now re-runs the
+# installers of casks with `auto_updates true`. Those casks update themselves, and
+# some (e.g. docker-desktop) prompt for sudo during install, which blocks this
+# unattended run. This env var restores the long-standing pre-6.0 behavior: leave
+# self-updating casks alone. Keep it exported before any brew call below.
+export HOMEBREW_NO_UPGRADE_AUTO_UPDATES_CASKS=1
+
 # ============================================================================
 # VALIDATION: Check tools and Python early (before setting up traps/locking)
 # ============================================================================
@@ -327,19 +334,16 @@ FAILED_STEP="brew update"
 echo "--- Updating Homebrew ---"
 "$BREW" update 2>&1 | tee -a "$UPGRADE_TEMP" >/dev/null
 
-FAILED_STEP="brew upgrade"
+FAILED_STEP="brew upgrade --formula"
 "$BREW" upgrade --formula 2>&1 | tee -a "$UPGRADE_TEMP" >/dev/null
 
-# Casks requiring sudo (privileged helpers, system extensions) are skipped here
-# so the run never blocks on an interactive password prompt. Update via the
-# app's own auto-updater or manually.
-SKIP_CASKS="docker-desktop"
-
+# Upgrade casks without naming them explicitly: an explicit cask name overrides
+# HOMEBREW_NO_UPGRADE_AUTO_UPDATES_CASKS (set above) and would re-run the
+# sudo-prompting installer for self-updating casks like docker-desktop. Letting
+# brew pick the targets respects that env var, so only non-self-updating casks
+# get upgraded and the run never blocks on a password prompt.
 FAILED_STEP="brew upgrade --cask"
-CASK_TARGETS=$("$BREW" outdated --cask --quiet 2>/dev/null | grep -vFx "$SKIP_CASKS" || true)
-if [ -n "$CASK_TARGETS" ]; then
-    echo "$CASK_TARGETS" | xargs "$BREW" upgrade --cask 2>&1 | tee -a "$UPGRADE_TEMP" >/dev/null
-fi
+"$BREW" upgrade --cask 2>&1 | tee -a "$UPGRADE_TEMP" >/dev/null
 
 FAILED_STEP="uv tool upgrade"
 echo "--- Updating UV Tools ---"
