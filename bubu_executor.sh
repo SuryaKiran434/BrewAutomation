@@ -19,6 +19,7 @@ done
 BASE_DIR="$HOME/IdeaProjects/BrewAutomation"
 TODAY=$(date "+%Y-%m-%d")
 TIMESTAMP=$(date)
+START_EPOCH=$(date +%s)  # run start, used to report duration in the email
 
 # Log file selection based on run type
 if [ "$MANUAL" = true ]; then
@@ -117,103 +118,145 @@ PYTHON_PATH=$(find_python || true)
 # HTML EMAIL GENERATION: Styled templates for success/failure
 # ============================================================================
 
+# Parse the captured upgrade output into grouped, deduplicated HTML sections.
+#
+# The temp file is annotated with "@@CAT@@ <name>" marker lines (written by the
+# execution stages below) so each block of output is attributed to its source:
+# Homebrew Formulae, Applications (casks), CLI Tools (uv), Python Packages (pip).
+#
+# All parsing runs in awk — it has associative arrays for dedup/grouping, which
+# macOS /bin/bash 3.2 lacks, and it HTML-escapes each field. brew echoes every
+# "name old -> new" line 2-3 times (listing + progress + summary), so dedup by
+# category+package keeps exactly one row per upgraded package.
+#
+# Output: line 1 is "@@COUNT@@ <n>" (total packages), the rest is the HTML body
+# (grouped category tables, or a celebratory empty state when nothing changed).
 generate_upgrade_summary() {
-    local temp_file="$1"
-
-    if [ ! -f "$temp_file" ] || [ ! -s "$temp_file" ]; then
-        echo "<div style='color: #999; font-style: italic; padding: 15px; text-align: center;'>No packages were updated.</div>"
-        return
-    fi
-
-    # Extract brew/cask upgrades (lines with "->")
-    local brew_upgrades=$(grep -E "[a-zA-Z0-9_-]+ [0-9].*->" "$temp_file" 2>/dev/null || true)
-
-    if [ -z "$brew_upgrades" ]; then
-        echo "<div style='color: #999; font-style: italic; padding: 15px; text-align: center;'>No packages were updated.</div>"
-        return
-    fi
-
-    echo "<table style='width: 100%; border-collapse: collapse; font-size: 13px;'>"
-    echo "<tr style='background: #f0f0f0;'><th style='padding: 10px; text-align: left; border-bottom: 2px solid #ddd; font-weight: 600;'>Package</th><th style='padding: 10px; text-align: left; border-bottom: 2px solid #ddd; font-weight: 600;'>Version Change</th></tr>"
-
-    while IFS= read -r line; do
-        if [ -z "$line" ]; then continue; fi
-        local field_count
-        field_count=$(echo "$line" | awk '{print NF}')
-        [ "$field_count" -lt 4 ] && continue
-        local package old_ver new_ver
-        package=$(echo "$line" | awk '{print $1}')
-        old_ver=$(echo "$line" | awk '{print $2}')
-        new_ver=$(echo "$line" | awk '{print $4}')
-        [ -z "$old_ver" ] && continue
-        [ -z "$new_ver" ] && continue
-        # Escape for safe HTML embedding
-        package=$(printf '%s' "$package" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g' -e "s/'/\&#39;/g")
-        old_ver=$(printf '%s' "$old_ver" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g' -e "s/'/\&#39;/g")
-        new_ver=$(printf '%s' "$new_ver" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g' -e "s/'/\&#39;/g")
-
-        echo "<tr style='border-bottom: 1px solid #eee;'>"
-        echo "<td style='padding: 10px; font-family: monospace; font-weight: 500;'>$package</td>"
-        echo "<td style='padding: 10px; color: #666; font-family: monospace;'>$old_ver → $new_ver</td>"
-        echo "</tr>"
-    done <<< "$brew_upgrades"
-
-    echo "</table>"
+    awk '
+    function esc(s){ gsub(/&/,"\\&amp;",s); gsub(/</,"\\&lt;",s); gsub(/>/,"\\&gt;",s); gsub(/"/,"\\&quot;",s); gsub(/\x27/,"\\&#39;",s); return s }
+    function emit(c,p,o,n,   k){
+        if(c=="") return
+        k=c SUBSEP p; if(k in seen) return; seen[k]=1
+        if(!(c in cnt)) order[++ncat]=c
+        cnt[c]++; total++
+        rows[c]=rows[c] "<tr><td class=\"name\">" esc(p) "</td><td class=\"ver\"><span class=\"old\">" esc(o) "</span><span class=\"arw\"> \342\206\222 </span><span class=\"new\">" esc(n) "</span></td></tr>\n"
+    }
+    /^@@CAT@@/ { c=$0; sub(/^@@CAT@@ /,"",c); next }
+    # Homebrew formulae & casks:  name  old  ->  new  [(size)]
+    (c=="Homebrew Formulae" || c=="Applications") && $3=="->" && $2 ~ /^[0-9]/ && $1 ~ /^[A-Za-z0-9@._+-]+$/ { emit(c,$1,$2,$4); next }
+    # uv tools:  Updated|Upgraded  name  vOLD  ->  vNEW
+    c=="CLI Tools" && ($1=="Updated"||$1=="Upgraded") && $4=="->" && $3 ~ /^v?[0-9]/ { emit(c,$2,$3,$5); next }
+    # Python (uv pip) diff:  - name==old   /   + name==new
+    c=="Python Packages" && /^[[:space:]]*-[[:space:]]+[A-Za-z0-9._+-]+==/ { s=$0; sub(/^[[:space:]]*-[[:space:]]+/,"",s); i=index(s,"=="); pyold[substr(s,1,i-1)]=substr(s,i+2); next }
+    c=="Python Packages" && /^[[:space:]]*\+[[:space:]]+[A-Za-z0-9._+-]+==/ { s=$0; sub(/^[[:space:]]*\+[[:space:]]+/,"",s); i=index(s,"=="); nm=substr(s,1,i-1); nv=substr(s,i+2); ov=(nm in pyold)?pyold[nm]:"\342\200\224"; emit(c,nm,ov,nv); next }
+    END{
+        print "@@COUNT@@ " total+0
+        if(total==0){
+            print "<div class=\"empty\"><div class=\"big\">\360\237\216\211</div><div class=\"t\">Everything\342\200\231s current</div><div class=\"s\">No packages needed updating today.</div></div>"
+        } else {
+            for(j=1;j<=ncat;j++){ c=order[j]
+                print "<div class=\"cat\"><div class=\"cat-h\"><span class=\"name\">" esc(c) "</span><span class=\"count\">" cnt[c] "</span></div><table class=\"pkgs\">"
+                printf "%s", rows[c]
+                print "</table></div>"
+            }
+        }
+    }
+    ' "$1"
 }
 
+# Emit the email shell with placeholders. Placeholders are substituted by the
+# caller: HEAD_CLASS (ok|fail), GLYPH (✓|✕), TITLE, SUBTITLE, DATE, TIME,
+# RUN_TYPE, DURATION, and BODY (the grouped package tables or the error box).
 generate_html_email() {
-    local title="$1"
-    local status="$2"
-    local upgrade_summary="$3"
-
     cat <<'EOF'
 <!DOCTYPE html>
 <html>
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #333; background: #f5f5f5; margin: 0; padding: 0; }
-        .container { max-width: 600px; margin: 0 auto; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
-        .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px 20px; text-align: center; }
-        .header h1 { margin: 0; font-size: 24px; font-weight: 600; }
-        .header p { margin: 8px 0 0 0; font-size: 14px; opacity: 0.9; }
-        .status { display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 600; margin-top: 10px; }
-        .status.success { background: #d4edda; color: #155724; }
-        .status.failed { background: #f8d7da; color: #721c24; }
-        .content { padding: 30px 20px; }
-        .section { margin-bottom: 20px; }
-        .section h2 { font-size: 16px; font-weight: 600; margin: 0 0 12px 0; color: #667eea; border-bottom: 2px solid #667eea; padding-bottom: 8px; }
-        .metadata { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; font-size: 13px; background: #f9f9f9; padding: 15px; border-radius: 6px; margin-bottom: 20px; }
-        .metadata-item { }
-        .metadata-label { color: #666; font-weight: 500; }
-        .metadata-value { color: #333; font-family: 'Monaco', 'Courier New', monospace; font-size: 12px; }
-        .footer { background: #f9f9f9; padding: 15px 20px; border-top: 1px solid #eee; font-size: 12px; color: #666; }
+        body { margin:0; background:#f4f2ee; color:#1d1d1f; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; -webkit-font-smoothing:antialiased; padding:28px 12px; }
+        .container { max-width:560px; margin:0 auto; background:#ffffff; border-radius:16px; overflow:hidden; box-shadow:0 6px 24px rgba(60,50,30,.10); border:1px solid #eeeae3; }
+        .head { padding:30px 30px 26px; text-align:center; color:#ffffff; }
+        .head.ok { background:linear-gradient(135deg,#20b47c 0%,#128a5e 100%); }
+        .head.fail { background:linear-gradient(135deg,#e85d62 0%,#c9353b 100%); }
+        .glyph { width:52px; height:52px; line-height:52px; margin:0 auto 14px; border-radius:50%; background:rgba(255,255,255,.18); font-size:26px; font-weight:700; }
+        .head h1 { margin:0; font-size:21px; font-weight:600; letter-spacing:-.01em; }
+        .head .sub { margin:6px 0 0; font-size:15px; font-weight:500; opacity:.94; }
+        .meta { width:100%; border-collapse:collapse; background:#faf8f4; border-bottom:1px solid #eeeae3; }
+        .meta td { width:50%; padding:14px 30px; vertical-align:top; border-top:1px solid #eeeae3; }
+        .meta tr:first-child td { border-top:none; }
+        .meta .k { font-size:10.5px; letter-spacing:.07em; text-transform:uppercase; color:#86868b; font-weight:600; margin-bottom:3px; }
+        .meta .v { font-size:14px; font-weight:500; color:#1d1d1f; }
+        .body { padding:24px 30px 8px; }
+        .cat { margin-bottom:22px; }
+        .cat-h { display:flex; align-items:center; gap:9px; margin:0 0 8px; padding-bottom:8px; border-bottom:1px solid #eeeae3; }
+        .cat-h .name { font-size:11.5px; letter-spacing:.05em; text-transform:uppercase; font-weight:700; color:#a1620f; }
+        .cat-h .count { font-size:11px; font-weight:700; color:#a1620f; background:#fbefd9; border-radius:20px; padding:1px 8px; min-width:20px; text-align:center; }
+        .pkgs { width:100%; border-collapse:collapse; font-family:ui-monospace,'SF Mono',Menlo,Monaco,'Courier New',monospace; font-variant-numeric:tabular-nums; }
+        .pkgs td { padding:8px 0; border-bottom:1px solid #f5f2ec; font-size:13.5px; }
+        .pkgs tr:last-child td { border-bottom:none; }
+        .pkgs .name { color:#1d1d1f; font-weight:500; }
+        .pkgs .ver { text-align:right; white-space:nowrap; font-size:13px; }
+        .old { color:#86868b; }
+        .arw { color:#cfcabf; padding:0 3px; }
+        .new { color:#17a06a; font-weight:600; }
+        .empty { text-align:center; padding:20px 16px 30px; }
+        .empty .big { font-size:38px; line-height:1; }
+        .empty .t { margin-top:12px; font-size:16px; font-weight:600; color:#1d1d1f; }
+        .empty .s { margin-top:4px; font-size:13.5px; color:#86868b; }
+        .errbox { background:#fdeceb; border:1px solid #f6cfce; border-radius:12px; padding:16px 18px; font-size:14px; line-height:1.55; color:#1d1d1f; }
+        .errbox .row { margin-bottom:6px; }
+        .errbox .row:last-child { margin-bottom:0; }
+        .errbox .lbl { color:#86868b; }
+        .errbox .step { font-family:ui-monospace,'SF Mono',Menlo,monospace; font-size:13px; background:#f9dbda; color:#a5292e; padding:2px 7px; border-radius:5px; }
+        .retry { margin-top:14px; font-size:13px; color:#86868b; text-align:center; }
+        .foot { padding:16px 30px 20px; border-top:1px solid #eeeae3; text-align:center; font-size:12px; color:#86868b; }
+        .foot .brand { font-weight:600; color:#a1620f; }
     </style>
 </head>
 <body>
     <div class="container">
-        <div class="header">
+        <div class="head HEAD_CLASS_PLACEHOLDER">
+            <div class="glyph">GLYPH_PLACEHOLDER</div>
             <h1>TITLE_PLACEHOLDER</h1>
-            <div class="status STATUS_CLASS">STATUS_BADGE</div>
-            <p>DATE_PLACEHOLDER</p>
+            <p class="sub">TAGLINE_PLACEHOLDER</p>
         </div>
-        <div class="content">
-            <div class="metadata">
-                <div class="metadata-item"><div class="metadata-label">Run Type</div><div class="metadata-value">RUN_TYPE_PLACEHOLDER</div></div>
-                <div class="metadata-item"><div class="metadata-label">Timestamp</div><div class="metadata-value">TIME_PLACEHOLDER</div></div>
-            </div>
-            <div class="section">
-                <h2>Package Updates</h2>
-                UPGRADE_SUMMARY_PLACEHOLDER
-            </div>
+        <table class="meta">
+            <tr>
+                <td><div class="k">Date</div><div class="v">DATE_PLACEHOLDER</div></td>
+                <td><div class="k">Time</div><div class="v">TIME_PLACEHOLDER</div></td>
+            </tr>
+            <tr>
+                <td><div class="k">Run type</div><div class="v">RUN_TYPE_PLACEHOLDER</div></td>
+                <td><div class="k">Duration</div><div class="v">DURATION_PLACEHOLDER</div></td>
+            </tr>
+        </table>
+        <div class="body">
+            BODY_PLACEHOLDER
         </div>
-        <div class="footer">
-            <p>For detailed logs, see your automation directory.</p>
-        </div>
+        <div class="foot"><span class="brand">&#127866; Homebrew Automation</span> &middot; full logs in your automation directory</div>
     </div>
 </body>
 </html>
 EOF
+}
+
+# Format a duration in whole seconds as "Ns", "Nm Ns", or "Nh Nm".
+format_duration() {
+    local s="$1"
+    if [ "$s" -lt 60 ]; then
+        echo "${s}s"
+    elif [ "$s" -lt 3600 ]; then
+        echo "$((s / 60))m $((s % 60))s"
+    else
+        echo "$((s / 3600))h $(((s % 3600) / 60))m"
+    fi
+}
+
+# HTML-escape a single string for safe embedding.
+html_escape() {
+    printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g' -e "s/'/\&#39;/g"
 }
 
 # ============================================================================
@@ -272,30 +315,40 @@ cleanup() {
     if [ $exit_code -ne 0 ]; then
         local error_msg="[$(date)] ERROR: Failed during '$FAILED_STEP' (exit code $exit_code)"
         if [ "$MANUAL" = false ]; then
-            error_msg="$error_msg. Next retry at 12:30 PM tomorrow."
+            error_msg="$error_msg. Next retry at 8:00 AM tomorrow."
         fi
 
         echo "$error_msg" | tee -a "$LOG_FILE" "$ERROR_LOG" >&2
 
         # Send error email with HTML
         if [ -n "$PYTHON_PATH" ] && [ -x "$PYTHON_PATH" ] && [ -n "$SENDER_EMAIL" ] && [ -n "$SENDER_APP_PASSWORD" ] && [ -n "$RECIPIENT_EMAIL" ]; then
-            local failed_step_escaped
-            failed_step_escaped=$(printf '%s' "$FAILED_STEP" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g' -e "s/'/\&#39;/g")
+            local failed_step_escaped duration retry_line
+            failed_step_escaped=$(html_escape "$FAILED_STEP")
+            duration=$(format_duration $(( $(date +%s) - START_EPOCH )))
             local error_body="Brew update failed on $TODAY during step: $FAILED_STEP (exit code $exit_code). See logs for details."
-            local error_summary="<div style='color: #333; padding: 15px; background: #f9f9f9; border-left: 3px solid #f8d7da; border-radius: 3px;'><strong>Failed step:</strong> $failed_step_escaped<br><strong>Exit code:</strong> $exit_code<br><strong>See error log for details.</strong></div>"
 
-            local html_error=$(generate_html_email "Brew Update Failed" "failed" "$error_summary")
-            html_error="${html_error//TITLE_PLACEHOLDER/Brew Update Failed}"
-            html_error="${html_error//STATUS_BADGE/✗ Failed}"
-            html_error="${html_error//STATUS_CLASS/failed}"
-            local esc_date esc_run_type esc_time
-            esc_date=$(printf '%s' "$TODAY" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g')
+            # Focused error box; only automated runs mention the next retry.
+            retry_line=""
+            if [ "$MANUAL" = false ]; then
+                retry_line="<div class=\"retry\">Next automatic retry at 8:00 AM tomorrow.</div>"
+            fi
+            local error_summary="<div class=\"errbox\"><div class=\"row\"><span class=\"lbl\">Failed step:</span> <span class=\"step\">$failed_step_escaped</span></div><div class=\"row\"><span class=\"lbl\">Exit code:</span> $exit_code</div><div class=\"row\"><span class=\"lbl\">Details:</span> see error.log in your automation directory.</div></div>$retry_line"
+
+            local esc_run_type esc_time
             esc_run_type=$([ "$MANUAL" = true ] && echo "Manual" || echo "Automated")
-            esc_time=$(date '+%H:%M:%S %Z' | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g')
-            html_error="${html_error//DATE_PLACEHOLDER/$esc_date}"
-            html_error="${html_error//RUN_TYPE_PLACEHOLDER/$esc_run_type}"
+            esc_time=$(html_escape "$(date '+%H:%M:%S %Z')")
+
+            local html_error
+            html_error=$(generate_html_email)
+            html_error="${html_error//HEAD_CLASS_PLACEHOLDER/fail}"
+            html_error="${html_error//GLYPH_PLACEHOLDER/✕}"
+            html_error="${html_error//TITLE_PLACEHOLDER/Homebrew Update Failed}"
+            html_error="${html_error//TAGLINE_PLACEHOLDER/Stopped during \'$failed_step_escaped\'}"
+            html_error="${html_error//DATE_PLACEHOLDER/$(html_escape "$TODAY")}"
             html_error="${html_error//TIME_PLACEHOLDER/$esc_time}"
-            html_error="${html_error//UPGRADE_SUMMARY_PLACEHOLDER/$error_summary}"
+            html_error="${html_error//RUN_TYPE_PLACEHOLDER/$esc_run_type}"
+            html_error="${html_error//DURATION_PLACEHOLDER/$duration}"
+            html_error="${html_error//BODY_PLACEHOLDER/$error_summary}"
 
             SENDER_EMAIL="$SENDER_EMAIL" SENDER_APP_PASSWORD="$SENDER_APP_PASSWORD" RECIPIENT_EMAIL="$RECIPIENT_EMAIL" \
             "$PYTHON_PATH" "$BASE_DIR/notify.py" \
@@ -335,6 +388,7 @@ echo "--- Updating Homebrew ---"
 "$BREW" update 2>&1 | tee -a "$UPGRADE_TEMP" >/dev/null
 
 FAILED_STEP="brew upgrade --formula"
+echo "@@CAT@@ Homebrew Formulae" >> "$UPGRADE_TEMP"
 "$BREW" upgrade --formula 2>&1 | tee -a "$UPGRADE_TEMP" >/dev/null
 
 # Upgrade casks without naming them explicitly: an explicit cask name overrides
@@ -343,10 +397,12 @@ FAILED_STEP="brew upgrade --formula"
 # brew pick the targets respects that env var, so only non-self-updating casks
 # get upgraded and the run never blocks on a password prompt.
 FAILED_STEP="brew upgrade --cask"
+echo "@@CAT@@ Applications" >> "$UPGRADE_TEMP"
 "$BREW" upgrade --cask 2>&1 | tee -a "$UPGRADE_TEMP" >/dev/null
 
 FAILED_STEP="uv tool upgrade"
 echo "--- Updating UV Tools ---"
+echo "@@CAT@@ CLI Tools" >> "$UPGRADE_TEMP"
 "$UV" tool upgrade --all 2>&1 | tee -a "$UPGRADE_TEMP" >/dev/null
 
 # Python pip upgrades (non-fatal if pyenv unavailable)
@@ -356,6 +412,7 @@ if [ -n "$PYTHON_PATH" ] && [ -x "$PYTHON_PATH" ]; then
         if [ -n "$PYENV_PYTHON" ] && [ -x "$PYENV_PYTHON" ]; then
             FAILED_STEP="uv pip upgrade"
             echo "--- Updating Python Libs ---"
+            echo "@@CAT@@ Python Packages" >> "$UPGRADE_TEMP"
             PKGS=$("$UV" pip list --python "$PYENV_PYTHON" --format freeze 2>/dev/null | cut -d= -f1 || true)
             if [ -n "$PKGS" ]; then
                 echo "$PKGS" | tr '\n' '\0' | xargs -0 "$UV" pip install --upgrade --python "$PYENV_PYTHON" 2>&1 | tee -a "$UPGRADE_TEMP" >/dev/null
@@ -370,32 +427,46 @@ FAILED_STEP="brew cleanup"
 "$BREW" cleanup --prune=all >/dev/null 2>&1 || true
 
 # ============================================================================
-# SUCCESS: Send email and finalize
-# ============================================================================
-
-# ============================================================================
 # SUCCESS: Generate HTML email and send notification
 # ============================================================================
 
-UPGRADE_SUMMARY=$(generate_upgrade_summary "$UPGRADE_TEMP")
+# Parse captured output: line 1 is "@@COUNT@@ <n>", the rest is the HTML body.
+PARSED_SUMMARY=$(generate_upgrade_summary "$UPGRADE_TEMP")
+UPGRADE_COUNT=$(printf '%s\n' "$PARSED_SUMMARY" | sed -n '1s/^@@COUNT@@ //p')
+UPGRADE_COUNT=${UPGRADE_COUNT:-0}
+UPGRADE_SUMMARY=$(printf '%s\n' "$PARSED_SUMMARY" | sed '1d')
+
+# Human-readable subtitle: "N packages updated" or "Already up to date".
+if [ "$UPGRADE_COUNT" -gt 0 ] 2>/dev/null; then
+    if [ "$UPGRADE_COUNT" -eq 1 ]; then
+        SUCCESS_SUBTITLE="1 package updated"
+    else
+        SUCCESS_SUBTITLE="$UPGRADE_COUNT packages updated"
+    fi
+else
+    SUCCESS_SUBTITLE="Already up to date"
+fi
 
 if [ -n "$PYTHON_PATH" ] && [ -x "$PYTHON_PATH" ] && [ -n "$SENDER_EMAIL" ] && [ -n "$SENDER_APP_PASSWORD" ] && [ -n "$RECIPIENT_EMAIL" ]; then
     success_body="Brew update completed successfully on $TODAY at $(date).
-
+$SUCCESS_SUBTITLE.
 $([ "$MANUAL" = true ] && echo "This was a manual run." || echo "")"
 
-    # Generate HTML email from template
-    html_body=$(generate_html_email "Brew Update Complete" "success" "$UPGRADE_SUMMARY")
-    html_body="${html_body//TITLE_PLACEHOLDER/Brew Update Complete}"
-    html_body="${html_body//STATUS_BADGE/✓ Completed Successfully}"
-    html_body="${html_body//STATUS_CLASS/success}"
-    esc_date=$(printf '%s' "$TODAY" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g')
+    duration=$(format_duration $(( $(date +%s) - START_EPOCH )))
     esc_run_type=$([ "$MANUAL" = true ] && echo "Manual" || echo "Automated")
-    esc_time=$(date '+%H:%M:%S %Z' | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g')
-    html_body="${html_body//DATE_PLACEHOLDER/$esc_date}"
-    html_body="${html_body//RUN_TYPE_PLACEHOLDER/$esc_run_type}"
+    esc_time=$(html_escape "$(date '+%H:%M:%S %Z')")
+
+    # Generate HTML email from template
+    html_body=$(generate_html_email)
+    html_body="${html_body//HEAD_CLASS_PLACEHOLDER/ok}"
+    html_body="${html_body//GLYPH_PLACEHOLDER/✓}"
+    html_body="${html_body//TITLE_PLACEHOLDER/Homebrew Update Complete}"
+    html_body="${html_body//TAGLINE_PLACEHOLDER/$SUCCESS_SUBTITLE}"
+    html_body="${html_body//DATE_PLACEHOLDER/$(html_escape "$TODAY")}"
     html_body="${html_body//TIME_PLACEHOLDER/$esc_time}"
-    html_body="${html_body//UPGRADE_SUMMARY_PLACEHOLDER/$UPGRADE_SUMMARY}"
+    html_body="${html_body//RUN_TYPE_PLACEHOLDER/$esc_run_type}"
+    html_body="${html_body//DURATION_PLACEHOLDER/$duration}"
+    html_body="${html_body//BODY_PLACEHOLDER/$UPGRADE_SUMMARY}"
 
     SENDER_EMAIL="$SENDER_EMAIL" SENDER_APP_PASSWORD="$SENDER_APP_PASSWORD" RECIPIENT_EMAIL="$RECIPIENT_EMAIL" \
     "$PYTHON_PATH" "$BASE_DIR/notify.py" \

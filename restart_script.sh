@@ -46,8 +46,8 @@ if [ "$MANUAL" = true ] && [ "$FORCE" != true ]; then
     sleep 3
 fi
 
-# Log the restart
-echo "The system restarted on $TIMESTAMP" >> "$HISTORY_LOG"
+# Log the restart (logged just before the shutdown call is issued)
+echo "System restart initiated on $TIMESTAMP" >> "$HISTORY_LOG"
 
 # Send email notification (credentials passed via environment, not command-line arguments)
 if [ -n "$PYTHON_PATH" ] && [ -x "$PYTHON_PATH" ]; then

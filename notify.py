@@ -67,8 +67,8 @@ def send(subject: str, body: str, html_body: str = "",
         print(f"[notify] ERROR: SMTP failed ({type(exc).__name__}). System may retry later.",
               file=sys.stderr)
         return 2
-    except OSError as exc:
-        print(f"[notify] ERROR: Network error. Check internet connection.",
+    except OSError:
+        print("[notify] ERROR: Network error. Check internet connection.",
               file=sys.stderr)
         return 2
 

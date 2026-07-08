@@ -20,7 +20,7 @@ Automated Homebrew, uv, and Python package updates on macOS with **hardened secu
 
 ### Brew Updates
 ```
-LaunchAgent (plist, daily at 12:30 PM)
+LaunchAgent (plist, daily at 8:00 AM)
     └─> brew_autoupdate.sh       (guard: skip if already ran today)
             ├─> Lock file check  (stale detection + rate limiting)
             └─> bubu_executor.sh (runs in iTerm2, falls back to background)
@@ -29,7 +29,9 @@ LaunchAgent (plist, daily at 12:30 PM)
                     └── uv pip install --upgrade (pyenv Python)
 ```
 
-**Automated:** Runs daily at 12:30 PM; only executes once per calendar day (duplicate guard prevents multiple runs).
+**Automated:** Runs daily at 8:00 AM; only executes once per calendar day (duplicate guard prevents multiple runs).
+
+> **Why 8:00 AM (before the Tue/Thu 9:00 AM restart)?** The update is a user-level LaunchAgent, so it can only run inside a logged-in GUI session. Scheduling it *before* the restart means it completes during your morning session; the restart (and any day you don't log back in afterward) can no longer cause it to be skipped. If you're not logged in by 8:00 AM, launchd runs the missed job the next time you log in that day.
 
 **Manual:** `bubu_executor.sh --manual` triggers an immediate run with separate logging.
 
@@ -100,7 +102,7 @@ Both automations send **styled HTML emails** on success and failure with:
 ```
 Subject: Brew Update Complete — 2026-04-01
 
-Brew update completed successfully on 2026-04-01 at Wed Apr 1 12:30:45 CDT 2026.
+Brew update completed successfully on 2026-04-01 at Wed Apr 1 08:00:45 CDT 2026.
 ```
 
 ### Failure Example
@@ -114,7 +116,7 @@ Exit code: 1
 
 See ~/IdeaProjects/BrewAutomation/error.log for details.
 
-Next retry at 12:30 PM tomorrow.
+Next retry at 8:00 AM tomorrow.
 ```
 
 ---
@@ -277,9 +279,9 @@ All log files are created with `600` permissions (owner-only readable).
 | `restart_script.sh` | System restart — logs and sends email notification, with confirmation prompt |
 | `tzreload.sh` | Timezone watcher — reloads LaunchAgent when system timezone changes |
 | `notify.py` | Email sender — sends HTML/plain text emails via Gmail SMTP |
-| `com.suryakiran.brewauto.plist` | LaunchAgent definition (brew updates, daily 12:30 PM) |
+| `com.suryakiran.brewauto.plist` | LaunchAgent definition (brew updates, daily 8:00 AM) |
 | `com.suryakiran.restart.plist` | LaunchDaemon definition (restart, Tue/Thu 9:00 AM) |
-| `com.suryakiran.tzwatch.plist` | LaunchAgent definition (timezone watcher, polls every 5 min) |
+| `com.suryakiran.tzwatch.plist` | LaunchAgent definition (timezone watcher, event-driven via `WatchPaths` on `/private/etc`) |
 | `reload.sh` | Installer — deploys brew LaunchAgent and tzwatch, enforces permissions |
 | `reload_restart.sh` | Installer — deploys restart LaunchDaemon, enforces permissions |
 | `.env` | Credentials (gitignored) — Gmail & tool paths |
@@ -350,7 +352,7 @@ All log files are created with `600` permissions (owner-only readable).
    ```
 
 ### System restart confirmation appears even on scheduled run
-**Symptoms:** 3-second countdown appears during scheduled 12:30 PM run
+**Symptoms:** 3-second countdown appears during the scheduled Tue/Thu 9:00 AM run
 
 **This shouldn't happen** (no confirmation on automated runs), but if it does:
 1. Check if `restart_script.sh --manual` was called instead of scheduled run

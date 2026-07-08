@@ -1,6 +1,8 @@
 #!/bin/bash
-# Polls for timezone changes every 5 minutes (via StartInterval in launchd).
-# Reloads the brew auto-update LaunchAgent only when the timezone actually changes.
+# Fires when launchd detects a change under /private/etc (via WatchPaths in the
+# tzwatch plist) — this is where the /etc/localtime symlink lives, so a timezone
+# change triggers it. Reloads the brew auto-update LaunchAgent only when the
+# timezone value actually changed.
 
 STATEFILE="$HOME/.brewauto_timezone"
 PLIST="$HOME/Library/LaunchAgents/com.suryakiran.brewauto.plist"
