@@ -15,8 +15,8 @@ if [ -f "$HOME/IdeaProjects/BrewAutomation/.env" ]; then
     echo "[OK] .env permissions: 600 (owner-only)"
 fi
 
-# Unload the old one
-sudo launchctl unload "$DEST_PATH" 2>/dev/null || true
+# Unload the old one (bootout is the modern replacement for the deprecated `unload`)
+sudo launchctl bootout system "$DEST_PATH" 2>/dev/null || true
 
 # Substitute __HOME__ placeholder with the actual home directory and install
 if ! sed "s|__HOME__|$HOME|g" "$SOURCE_PATH" | sudo tee "$DEST_PATH" > /dev/null; then
@@ -40,8 +40,8 @@ STDERR_LOG="$HOME/IdeaProjects/BrewAutomation/restart_stderr.log"
 sudo touch "$STDOUT_LOG" "$STDERR_LOG"
 sudo chmod 600 "$STDOUT_LOG" "$STDERR_LOG"
 
-# Load the new version
-if ! sudo launchctl load "$DEST_PATH"; then
+# Load the new version (bootstrap is the modern replacement for the deprecated `load`)
+if ! sudo launchctl bootstrap system "$DEST_PATH"; then
     echo "ERROR: Failed to load LaunchDaemon. Check plist syntax:"
     sudo plutil -lint "$DEST_PATH"
     exit 1
