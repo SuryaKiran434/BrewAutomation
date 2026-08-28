@@ -294,10 +294,46 @@ if [ "$MANUAL" = true ]; then
     fi
 fi
 
+# Reclaim a lock directory left behind by a process that died without running
+# its cleanup trap (e.g. killed by the Tue/Thu 9:00 AM restart mid-update).
+# Without this, one abandoned run blocks every subsequent run forever.
+reclaim_stale_lock_dir() {
+    local owner_pid="" lock_epoch="" dir_epoch age
+
+    if [ -f "$LOCK_FILE" ]; then
+        read -r owner_pid lock_epoch < "$LOCK_FILE" 2>/dev/null || true
+    fi
+
+    # Owning process still alive: a real run is in progress, leave it alone.
+    if [ -n "$owner_pid" ] && kill -0 "$owner_pid" 2>/dev/null; then
+        return 1
+    fi
+
+    # No live owner. Fall back to the directory's own age when the lock file is
+    # missing or unparseable, so an orphaned dir can never wedge us permanently.
+    if [ -z "$lock_epoch" ] || ! [ "$lock_epoch" -eq "$lock_epoch" ] 2>/dev/null; then
+        dir_epoch=$(stat -f %m "$LOCK_DIR" 2>/dev/null) || return 1
+        lock_epoch="$dir_epoch"
+    fi
+
+    age=$(( $(date +%s) - lock_epoch ))
+    [ "$age" -lt 0 ] && age=0
+    if [ "$age" -le "$LOCK_TIMEOUT" ]; then
+        return 1
+    fi
+
+    echo "[$(date)] Note: Removed stale lock dir (age: ${age}s, owner PID ${owner_pid:-unknown} not running)" >> "$ERROR_LOG"
+    rm -f "$LOCK_FILE"
+    rm -rf "$LOCK_DIR"
+    return 0
+}
+
 # Atomically acquire lock using mkdir to prevent race conditions
 if ! mkdir "$LOCK_DIR" 2>/dev/null; then
-    echo "[$(date)] Skip: Another instance is acquiring the lock" >> "$ERROR_LOG"
-    exit 0
+    if ! reclaim_stale_lock_dir || ! mkdir "$LOCK_DIR" 2>/dev/null; then
+        echo "[$(date)] Skip: Another instance is acquiring the lock" >> "$ERROR_LOG"
+        exit 0
+    fi
 fi
 echo "$$ $(date +%s)" > "$LOCK_FILE"
 
