@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  shell:
+    name: Shell lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Syntax check every script
+        run: |
+          fail=0
+          while IFS= read -r -d '' f; do
+            if bash -n "$f"; then echo "ok    $f"; else echo "FAIL  $f"; fail=1; fi
+          done < <(find . -name '*.sh' -not -path './.git/*' -print0)
+          exit $fail
+
+      - name: ShellCheck
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+          # -S warning: style/info notes are advisory on a mature script and
+          # would turn this job red on day one for no correctness gain.
+          find . -name '*.sh' -not -path './.git/*' -print0 \
+            | xargs -0 shellcheck -S warning -e SC1091
