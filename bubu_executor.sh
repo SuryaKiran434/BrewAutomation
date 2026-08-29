@@ -387,9 +387,12 @@ FAILED_STEP="brew update"
 echo "--- Updating Homebrew ---"
 "$BREW" update 2>&1 | tee -a "$UPGRADE_TEMP" >/dev/null
 
+# HOMEBREW_NO_AUTO_UPDATE=1 on the upgrade steps: `brew update` already ran
+# just above, so brew's auto-update would redundantly re-fetch the taps. Scoped
+# to these two commands so `brew outdated` above keeps its current behaviour.
 FAILED_STEP="brew upgrade --formula"
 echo "@@CAT@@ Homebrew Formulae" >> "$UPGRADE_TEMP"
-"$BREW" upgrade --formula 2>&1 | tee -a "$UPGRADE_TEMP" >/dev/null
+HOMEBREW_NO_AUTO_UPDATE=1 "$BREW" upgrade --formula 2>&1 | tee -a "$UPGRADE_TEMP" >/dev/null
 
 # Upgrade casks without naming them explicitly: an explicit cask name overrides
 # HOMEBREW_NO_UPGRADE_AUTO_UPDATES_CASKS (set above) and would re-run the
@@ -398,7 +401,7 @@ echo "@@CAT@@ Homebrew Formulae" >> "$UPGRADE_TEMP"
 # get upgraded and the run never blocks on a password prompt.
 FAILED_STEP="brew upgrade --cask"
 echo "@@CAT@@ Applications" >> "$UPGRADE_TEMP"
-"$BREW" upgrade --cask 2>&1 | tee -a "$UPGRADE_TEMP" >/dev/null
+HOMEBREW_NO_AUTO_UPDATE=1 "$BREW" upgrade --cask 2>&1 | tee -a "$UPGRADE_TEMP" >/dev/null
 
 FAILED_STEP="uv tool upgrade"
 echo "--- Updating UV Tools ---"
