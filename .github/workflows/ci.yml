@@ -48,8 +48,15 @@ jobs:
       #
       # Analysis is advisory, not a gate: continue-on-error keeps a SonarCloud
       # outage or a scanner hiccup from failing the required check.
+      #
+      # Pinned to a commit SHA rather than the moving v6 tag. This repo is the
+      # one in this batch whose sonar.sources covers .github/, so Sonar analyses
+      # this workflow and flags an unpinned action reference (githubactions:S7637)
+      # as a supply-chain vulnerability -- correctly: a moving tag can be
+      # repointed at any commit. Dependabot tracks github-actions weekly here and
+      # updates SHA pins along with the comment.
       - name: SonarCloud analysis
         continue-on-error: true
-        uses: SonarSource/sonarqube-scan-action@v6
+        uses: SonarSource/sonarqube-scan-action@fd88b7d7ccbaefd23d8f36f73b59db7a3d246602 # v6.0.0
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
