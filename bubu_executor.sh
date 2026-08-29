@@ -7,6 +7,8 @@ set -e
 
 # Parse flags
 MANUAL=false
+# shellcheck disable=SC2034  # currently unreferenced; rate limiting is enforced
+#                            via the lock-file timestamp check, not this value.
 RATE_LIMIT_MINUTES=5
 for arg in "$@"; do
     [ "$arg" = "--manual" ] && MANUAL=true
@@ -349,7 +351,8 @@ cleanup() {
     rm -rf "$LOCK_DIR"
 
     if [ $exit_code -ne 0 ]; then
-        local error_msg="[$(date)] ERROR: Failed during '$FAILED_STEP' (exit code $exit_code)"
+        local error_msg
+        error_msg="[$(date)] ERROR: Failed during '$FAILED_STEP' (exit code $exit_code)"
         if [ "$MANUAL" = false ]; then
             error_msg="$error_msg. Next retry at 8:00 AM tomorrow."
         fi
@@ -423,9 +426,12 @@ FAILED_STEP="brew update"
 echo "--- Updating Homebrew ---"
 "$BREW" update 2>&1 | tee -a "$UPGRADE_TEMP" >/dev/null
 
+# HOMEBREW_NO_AUTO_UPDATE=1 on the upgrade steps: `brew update` already ran
+# just above, so brew's auto-update would redundantly re-fetch the taps. Scoped
+# to these two commands so `brew outdated` above keeps its current behaviour.
 FAILED_STEP="brew upgrade --formula"
 echo "@@CAT@@ Homebrew Formulae" >> "$UPGRADE_TEMP"
-"$BREW" upgrade --formula 2>&1 | tee -a "$UPGRADE_TEMP" >/dev/null
+HOMEBREW_NO_AUTO_UPDATE=1 "$BREW" upgrade --formula 2>&1 | tee -a "$UPGRADE_TEMP" >/dev/null
 
 # Upgrade casks without naming them explicitly: an explicit cask name overrides
 # HOMEBREW_NO_UPGRADE_AUTO_UPDATES_CASKS (set above) and would re-run the
@@ -434,7 +440,7 @@ echo "@@CAT@@ Homebrew Formulae" >> "$UPGRADE_TEMP"
 # get upgraded and the run never blocks on a password prompt.
 FAILED_STEP="brew upgrade --cask"
 echo "@@CAT@@ Applications" >> "$UPGRADE_TEMP"
-"$BREW" upgrade --cask 2>&1 | tee -a "$UPGRADE_TEMP" >/dev/null
+HOMEBREW_NO_AUTO_UPDATE=1 "$BREW" upgrade --cask 2>&1 | tee -a "$UPGRADE_TEMP" >/dev/null
 
 FAILED_STEP="uv tool upgrade"
 echo "--- Updating UV Tools ---"
@@ -524,7 +530,7 @@ if [ "$MANUAL" = false ]; then
     echo "Running bubu has been completed on $TODAY ($(date))" >> "$LOG_FILE"
 
     # Clear error log on clean run
-    > "$ERROR_LOG"
+    : > "$ERROR_LOG"
 
     # Log rotation: keep only the last 30 days of completion markers
     # Use portable date command (try BSD first, then GNU)
