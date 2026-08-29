@@ -19,6 +19,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          # SonarCloud needs the full history to attribute code to authors and
+          # to work out what counts as "new code"; a shallow clone breaks both.
+          fetch-depth: 0
 
       - name: Syntax check every script
         run: |
@@ -35,3 +39,24 @@ jobs:
           # would turn this job red on day one for no correctness gain.
           find . -name '*.sh' -not -path './.git/*' -print0 \
             | xargs -0 shellcheck -S warning -e SC1091
+
+      # Analysis only. There is no test suite here and SonarCloud has no shell
+      # coverage importer, so nothing is imported as coverage -- see
+      # sonar-project.properties. Runs after ShellCheck, which remains the
+      # sharper of the two tools for shell: Sonar ships ~40 shell rules and most
+      # of what it reports on this repo is style (prefer "[[" over "[").
+      #
+      # Analysis is advisory, not a gate: continue-on-error keeps a SonarCloud
+      # outage or a scanner hiccup from failing the required check.
+      #
+      # Pinned to a commit SHA rather than the moving v6 tag. This repo is the
+      # one in this batch whose sonar.sources covers .github/, so Sonar analyses
+      # this workflow and flags an unpinned action reference (githubactions:S7637)
+      # as a supply-chain vulnerability -- correctly: a moving tag can be
+      # repointed at any commit. Dependabot tracks github-actions weekly here and
+      # updates SHA pins along with the comment.
+      - name: SonarCloud analysis
+        continue-on-error: true
+        uses: SonarSource/sonarqube-scan-action@fd88b7d7ccbaefd23d8f36f73b59db7a3d246602 # v6.0.0
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
