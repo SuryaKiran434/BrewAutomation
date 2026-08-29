@@ -7,6 +7,8 @@ set -e
 
 # Parse flags
 MANUAL=false
+# shellcheck disable=SC2034  # currently unreferenced; rate limiting is enforced
+#                            via the lock-file timestamp check, not this value.
 RATE_LIMIT_MINUTES=5
 for arg in "$@"; do
     [ "$arg" = "--manual" ] && MANUAL=true
@@ -313,7 +315,8 @@ cleanup() {
     rm -rf "$LOCK_DIR"
 
     if [ $exit_code -ne 0 ]; then
-        local error_msg="[$(date)] ERROR: Failed during '$FAILED_STEP' (exit code $exit_code)"
+        local error_msg
+        error_msg="[$(date)] ERROR: Failed during '$FAILED_STEP' (exit code $exit_code)"
         if [ "$MANUAL" = false ]; then
             error_msg="$error_msg. Next retry at 8:00 AM tomorrow."
         fi
@@ -491,7 +494,7 @@ if [ "$MANUAL" = false ]; then
     echo "Running bubu has been completed on $TODAY ($(date))" >> "$LOG_FILE"
 
     # Clear error log on clean run
-    > "$ERROR_LOG"
+    : > "$ERROR_LOG"
 
     # Log rotation: keep only the last 30 days of completion markers
     # Use portable date command (try BSD first, then GNU)
