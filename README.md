@@ -13,6 +13,8 @@ Automated Homebrew, uv, and Python package updates on macOS with **hardened secu
 - ✅ **Graceful degradation** (iTerm2 fallback to background execution)
 - ✅ **Manual triggers** (immediate updates/restarts with separate logging)
 - ✅ **Log rotation** (automatic 30-day retention for automation logs)
+- ✅ **Timezone watcher** (reloads the schedule when the system timezone changes)
+- ✅ **Shell lint in CI** (`bash -n` + ShellCheck on every push and PR)
 
 ---
 
@@ -20,14 +22,43 @@ Automated Homebrew, uv, and Python package updates on macOS with **hardened secu
 
 ### Brew Updates
 ```
-LaunchAgent (plist, daily at 8:00 AM)
-    └─> brew_autoupdate.sh       (guard: skip if already ran today)
-            ├─> Lock file check  (stale detection + rate limiting)
-            └─> bubu_executor.sh (runs in iTerm2, falls back to background)
-                    ├── brew update / upgrade / upgrade --cask
-                    ├── uv tool upgrade --all
-                    └── uv pip install --upgrade (pyenv Python)
+com.suryakiran.brewauto LaunchAgent (plist, daily at 8:00 AM)
+    └─> brew_autoupdate.sh          (guard: skip if already completed today)
+            ├─> Lock file check     (PID liveness + 1-hour staleness)
+            └─> bubu_executor.sh    (opens iTerm2; falls back to background)
+                    ├── validate BREW_PATH / UV_PATH, resolve python
+                    ├── acquire lock atomically (mkdir brew_update.lock.d)
+                    ├── brew outdated              ──► run log
+                    ├── brew update                ──┐
+                    ├── brew upgrade --formula       │  each tagged with an
+                    ├── brew upgrade --cask          ├─► @@CAT@@ marker into
+                    ├── uv tool upgrade --all        │  a 600-perm temp file
+                    ├── uv pip install --upgrade   ──┘  (pyenv Python)
+                    ├── brew cleanup --prune=all
+                    ├── awk parses the temp file: dedup + group by category,
+                    │   HTML-escape, emit "@@COUNT@@ n" + the HTML table body
+                    ├── notify.py  ──► Gmail SMTP_SSL, HTML + plain-text
+                    └── completion marker, error-log clear, log rotation
 ```
+
+The `awk` stage is doing real work, not just formatting. `brew` echoes each
+`name old -> new` line two or three times (listing, progress, summary), and
+macOS ships `/bin/bash` 3.2, which has no associative arrays — so dedup,
+grouping by category, and HTML-escaping all happen inside `awk`, which does
+have them.
+
+**Homebrew env vars.** Two are in play, and the difference between them is
+deliberate:
+
+| Variable | Scope | Why |
+|---|---|---|
+| `HOMEBREW_NO_UPGRADE_AUTO_UPDATES_CASKS=1` | **exported**, file-level | Homebrew 6.0 (April 2026) changed the default so `brew upgrade` re-runs the installers of casks marked `auto_updates true`. Some of those (e.g. `docker-desktop`) prompt for sudo mid-install, which would hang an unattended run. This restores the pre-6.0 behaviour for every brew call. |
+| `HOMEBREW_NO_AUTO_UPDATE=1` | **per-command prefix** on the two `brew upgrade` lines only | `brew update` already ran immediately above, so brew's implicit auto-update would redundantly re-fetch the taps. It is scoped rather than exported on purpose: `brew outdated` runs *earlier* in the script, and exporting the variable would change its behaviour — and therefore the "Outdated packages" listing recorded at the top of the run log. |
+
+The casks are upgraded without naming them explicitly for a related reason: an
+explicit cask name overrides `HOMEBREW_NO_UPGRADE_AUTO_UPDATES_CASKS`, which
+would re-invoke the sudo-prompting installer. Letting `brew` pick the targets
+respects the variable, so the run never blocks on a password prompt.
 
 **Automated:** Runs daily at 8:00 AM; only executes once per calendar day (duplicate guard prevents multiple runs).
 
@@ -45,6 +76,36 @@ LaunchDaemon (plist, Tue & Thu at 9:00 AM)
 **Automated:** Scheduled for Tuesday and Thursday mornings (no confirmation).
 
 **Manual:** `restart_script.sh --manual` triggers a restart after 3-second confirmation. Pass `--force` to skip the confirmation.
+
+### Timezone Watcher
+```
+com.suryakiran.tzwatch LaunchAgent (WatchPaths: /private/etc, RunAtLoad)
+    └─> tzreload.sh
+            ├── readlink /private/etc/localtime ──► current zone name
+            ├── reject anything outside [A-Za-z0-9/_+-]
+            ├── compare against ~/.brewauto_timezone
+            └── if changed (and not the first run):
+                    launchctl bootout  gui/$(id -u) com.suryakiran.brewauto.plist
+                    launchctl bootstrap gui/$(id -u) com.suryakiran.brewauto.plist
+```
+
+`StartCalendarInterval` is evaluated against the timezone in force when the
+agent was loaded, so an 8:00 AM job silently drifts after you fly somewhere.
+`/etc/localtime` is a symlink into the zoneinfo database, so watching
+`/private/etc` catches the change; the state file is written `tmp` → `mv` so a
+crash mid-write cannot leave a half-written zone name behind.
+
+### Installer and helper scripts
+
+| Script | Run it | What it does |
+|---|---|---|
+| `reload.sh` | `bash reload.sh` | Installs **both** user LaunchAgents. Enforces `chmod 600` on `.env` (aborts if that fails), substitutes `__HOME__` in the plist templates into `~/Library/LaunchAgents/`, then `bootout` + `bootstrap` for `com.suryakiran.brewauto` and `com.suryakiran.tzwatch`. On a load failure it runs `plutil -lint` so you see the syntax error. |
+| `reload_restart.sh` | `bash reload_restart.sh` | Installs the **system** LaunchDaemon (needs `sudo`). Same `.env` permission check, then writes the plist to `/Library/LaunchDaemons/`, `chown root:wheel`, `chmod 644`, pre-creates the restart logs at `600` so launchd appends rather than creating them world-readable, and `bootstrap system`. |
+| `restart_script.sh` | `bash restart_script.sh --manual [--force]` | Logs the restart, emails a notification, then `sudo /sbin/shutdown -r now`. Scheduled runs get no prompt; `--manual` gets a 3-second Ctrl+C window unless `--force`. |
+| `tzreload.sh` | event-driven, not called by hand | The timezone watcher above. |
+
+Both installers are idempotent — `bootout` before `bootstrap` means re-running
+them is the normal way to apply a change.
 
 ---
 
@@ -70,6 +131,27 @@ LaunchDaemon (plist, Tue & Thu at 9:00 AM)
 - ✅ Atomic lock creation via `mkdir` (race-condition-free)
 - ✅ Rate limiting for manual triggers (prevents duplicate execution)
 - ✅ Clock skew protection (negative lock age clamped to zero)
+- ✅ Abandoned lock directories reclaimed (a run killed by the Tue/Thu restart cannot wedge every future run)
+
+> **On rate limiting.** `bubu_executor.sh` defines `RATE_LIMIT_MINUTES=5`, but
+> nothing reads it — it carries a `# shellcheck disable=SC2034` annotation
+> explaining exactly that. The rate limiting is real, it is just enforced
+> elsewhere: `check_lock()` reads the PID and epoch out of `brew_update.lock`,
+> skips the run while the owning PID is alive, and only clears the lock once it
+> is older than `LOCK_TIMEOUT` (3600s). The **lock-file timestamp check** is the
+> mechanism; `RATE_LIMIT_MINUTES` is a leftover constant kept for readability.
+
+There are two layers of locking, which is easy to misread:
+
+| Artifact | Written by | Purpose |
+|---|---|---|
+| `brew_update.lock` | `echo "$$ $(date +%s)" >` | Holds `PID epoch`. Answers "is a run alive, and how old is it?" |
+| `brew_update.lock.d/` | `mkdir` | The actual mutex. `mkdir` is atomic, so two racing processes cannot both win. |
+
+`reclaim_stale_lock_dir()` handles the case where a run died without firing its
+`EXIT` trap — killed by the 9:00 AM restart, say. It refuses to touch the lock
+while the owning PID is alive, falls back to the directory's own mtime when the
+lock file is missing or unparseable, and only then removes both.
 
 ### Tool Validation
 - ✅ Brew and uv paths validated early (before traps/logging)
@@ -130,9 +212,16 @@ cd ~/IdeaProjects/BrewAutomation
 chmod +x *.sh  # Make scripts executable
 ```
 
+> The scripts resolve every path from `$HOME/IdeaProjects/BrewAutomation`. If
+> you clone somewhere else, update `BASE_DIR` at the top of `brew_autoupdate.sh`,
+> `bubu_executor.sh`, and `restart_script.sh`, and the `SOURCE_PATH` variables in
+> the two installers.
+
 ### 2. Configure Gmail Credentials
 
-Edit `.env` with your Gmail App Password:
+Create `.env` in the project root. **These are placeholders — substitute your
+own values.** `.env` is gitignored and must never be committed:
+
 ```bash
 SENDER_EMAIL=your-email@gmail.com
 SENDER_APP_PASSWORD="xxxx xxxx xxxx xxxx"
@@ -140,6 +229,22 @@ RECIPIENT_EMAIL=your-email@gmail.com
 BREW_PATH=/opt/homebrew/bin/brew
 UV_PATH=/opt/homebrew/bin/uv
 ```
+
+| Variable | Required | Notes |
+|---|---|---|
+| `SENDER_EMAIL` | for email | Gmail address the notification is sent from |
+| `SENDER_APP_PASSWORD` | for email | 16-character Gmail **App Password**, not your login password. Surrounding quotes are stripped on read, so either form works. |
+| `RECIPIENT_EMAIL` | for email | Where notifications are delivered |
+| `BREW_PATH` | no | Defaults to `/opt/homebrew/bin/brew` |
+| `UV_PATH` | no | Defaults to `/opt/homebrew/bin/uv` |
+
+If any of the three email variables is empty the run still completes — the
+send is simply skipped. Updates never fail because email is misconfigured.
+
+The values are read one at a time with targeted `grep`s rather than sourced, so
+the credentials never enter the environment of every child process, and they are
+passed to `notify.py` as scoped environment variables rather than argv — keeping
+them out of `ps` output.
 
 **To get a Gmail App Password:**
 1. Enable 2-Step Verification: https://myaccount.google.com/security
@@ -150,14 +255,29 @@ UV_PATH=/opt/homebrew/bin/uv
 
 ### 3. Install LaunchAgents
 ```bash
-bash reload.sh                    # Install brew automation (user-level)
-bash reload_restart.sh            # Install restart automation (system-level, needs sudo)
+bash reload.sh                    # brew auto-update + timezone watcher (user-level)
+bash reload_restart.sh            # restart automation (system-level, needs sudo)
+```
+
+Each installer substitutes the `__HOME__` placeholder in the plist template,
+writes the result to the launchd directory, then loads it with the modern
+`launchctl bootstrap` (`bootout` first, so re-running is safe):
+
+```bash
+# what reload.sh does, per agent
+launchctl bootout    gui/"$(id -u)" ~/Library/LaunchAgents/com.suryakiran.brewauto.plist
+launchctl bootstrap  gui/"$(id -u)" ~/Library/LaunchAgents/com.suryakiran.brewauto.plist
+
+# what reload_restart.sh does
+sudo launchctl bootout    system /Library/LaunchDaemons/com.suryakiran.restart.plist
+sudo launchctl bootstrap  system /Library/LaunchDaemons/com.suryakiran.restart.plist
 ```
 
 Output should show:
 ```
+[OK] .env permissions: 600 (owner-only)
 ✓ LaunchAgent installed and loaded
-✓ .env permissions: 600 (owner-only)
+✓ Timezone watcher installed and loaded
 ```
 
 ### 4. Verify Installation
@@ -286,6 +406,8 @@ All log files are created with `600` permissions (owner-only readable).
 | `reload_restart.sh` | Installer — deploys restart LaunchDaemon, enforces permissions |
 | `.env` | Credentials (gitignored) — Gmail & tool paths |
 | `.gitignore` | Git exclusions — credentials, logs, lock directory, IDE files |
+| `.github/workflows/ci.yml` | Shell lint — `bash -n` + ShellCheck |
+| `.github/dependabot.yml` | Weekly `github-actions` updates |
 | `README.md` | This file |
 
 ---
@@ -309,8 +431,10 @@ All log files are created with `600` permissions (owner-only readable).
 **Debug steps:**
 1. Verify `.env` has all credentials:
    ```bash
-   grep "^SENDER_EMAIL\|^SENDER_APP_PASSWORD\|^RECIPIENT_EMAIL" ~/.BrewAutomation/.env
+   grep -c "^SENDER_EMAIL\|^SENDER_APP_PASSWORD\|^RECIPIENT_EMAIL" ~/IdeaProjects/BrewAutomation/.env
    ```
+   Expect `3`. (Counting rather than printing keeps the app password off your
+   screen and out of your shell history.)
 2. Verify app password is correct (not Gmail login password): https://myaccount.google.com/apppasswords
 3. Verify 2-Step Verification is enabled: https://myaccount.google.com/security
 4. Check for SMTP errors:
@@ -360,6 +484,45 @@ All log files are created with `600` permissions (owner-only readable).
 
 ---
 
+## Continuous Integration
+
+There is no test suite — these scripts drive a live machine. CI lints instead,
+on every push to `main` and every pull request. The **`Shell lint`** check is a
+required status check on `main`.
+
+Two stages, over every `*.sh` in the repo:
+
+```bash
+bash -n "$f"                                    # parse-only syntax check
+shellcheck -S warning -e SC1091 *.sh            # warnings and above
+```
+
+`-S warning` is deliberate: style and info notes are advisory on a mature
+script and would have turned the job red on day one for no correctness gain.
+`SC1091` (cannot follow non-constant source) is excluded for the same reason.
+
+Reproduce it locally before pushing:
+
+```bash
+brew install shellcheck
+find . -name '*.sh' -not -path './.git/*' -print0 | xargs -0 shellcheck -S warning -e SC1091
+```
+
+**Do not introduce new warnings.** Fixes already made to satisfy this gate,
+worth knowing so they are not "tidied" back:
+
+- `launchctl` targets are written `gui/"$(id -u)"`, not `gui/$(id -u)` — the
+  command substitution is quoted (SC2086).
+- The error log is truncated with `: > "$ERROR_LOG"`, not a bare
+  `> "$ERROR_LOG"` (SC2188 — a redirection with no command).
+- `local error_msg` is declared on its own line, separate from its assignment.
+  Combining them masks the exit status of the command substitution (SC2155).
+- `RATE_LIMIT_MINUTES` carries an explicit `# shellcheck disable=SC2034` with a
+  comment pointing at the lock-file timestamp check that actually enforces the
+  rate limit.
+
+---
+
 ## Uninstalling
 
 To disable and remove automations:
@@ -380,10 +543,17 @@ rm -rf ~/IdeaProjects/BrewAutomation
 
 ## Requirements
 
-- macOS 10.14+ with Homebrew installed
-- Python 3 (for email notifications)
-- **Optional:** pyenv (for Python package upgrades via uv pip)
+- **macOS** 10.14+ (launchd, `osascript`, BSD `date`/`stat` flags)
+- **Homebrew** — path taken from `BREW_PATH`, default `/opt/homebrew/bin/brew`
+- **uv** — path taken from `UV_PATH`, default `/opt/homebrew/bin/uv`
+- **Python 3** — for `notify.py`; pyenv's python is preferred, `python3` on `PATH` is the fallback
+- **Optional:** pyenv (the `uv pip` library-upgrade step is skipped without it)
 - **Optional:** iTerm2 (falls back to background execution if missing)
+
+> Homebrew and uv are **not** optional. `validate_tools()` runs before the traps
+> and locking are set up and exits `1` with a clear message if either path is
+> not executable. `notify.py` uses only the standard library — there is nothing
+> to `pip install`.
 
 ---
 
@@ -395,7 +565,16 @@ This project uses `$HOME` for all paths — works on any macOS user account afte
 
 ## Version History
 
-### v3.0 (Current — Comprehensive Security Hardening)
+### v3.1 (Current — Homebrew 6.0 compatibility & lint gate)
+- ✅ `HOMEBREW_NO_AUTO_UPDATE=1` scoped as a per-command prefix on the two `brew upgrade` calls — not exported, so `brew outdated` earlier in the run keeps its behaviour and the "Outdated packages" listing is unchanged
+- ✅ `HOMEBREW_NO_UPGRADE_AUTO_UPDATES_CASKS=1` exported for Homebrew 6.0, which otherwise re-runs sudo-prompting cask installers unattended
+- ✅ Casks upgraded without explicit names, so the above env var is not overridden
+- ✅ Abandoned lock directories reclaimed via `reclaim_stale_lock_dir()`
+- ✅ ShellCheck fixes: quoted `$(id -u)` in `launchctl gui/` targets, `: >` instead of a bare `>` truncation, `local error_msg` split from its assignment
+- ✅ `RATE_LIMIT_MINUTES` annotated with a `shellcheck disable=SC2034` explaining that rate limiting is enforced by the lock-file timestamp check
+- ✅ CI added: `bash -n` + ShellCheck (`-S warning`) as a required check on `main`
+
+### v3.0 (Comprehensive Security Hardening)
 - ✅ Credentials passed via scoped env vars — no longer visible in `ps` output
 - ✅ Fixed `notify.py` quote-stripping bug (SMTP auth was failing when loaded from `.env`)
 - ✅ Fixed missing `error_body` variable (error emails had blank plain-text body)
