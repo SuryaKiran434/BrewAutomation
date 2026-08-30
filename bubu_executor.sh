@@ -313,10 +313,17 @@ reclaim_stale_lock_dir() {
 
     # No live owner. Fall back to the directory's own age when the lock file is
     # missing or unparseable, so an orphaned dir can never wedge us permanently.
-    if [ -z "$lock_epoch" ] || ! [ "$lock_epoch" -eq "$lock_epoch" ] 2>/dev/null; then
-        dir_epoch=$(stat -f %m "$LOCK_DIR" 2>/dev/null) || return 1
-        lock_epoch="$dir_epoch"
-    fi
+    # `[ "$x" -eq "$x" ]` was the classic shell test for "is this an integer",
+    # relying on -eq failing on non-numeric input. It works, but it reads as a
+    # comparison of a value with itself -- which is what a real typo looks like,
+    # and what shellcheck and SonarCloud both flag. A glob says it directly.
+    # The '' branch covers the unset case too, so no separate -z test is needed.
+    case "$lock_epoch" in
+        ''|*[!0-9]*)
+            dir_epoch=$(stat -f %m "$LOCK_DIR" 2>/dev/null) || return 1
+            lock_epoch="$dir_epoch"
+            ;;
+    esac
 
     age=$(( $(date +%s) - lock_epoch ))
     [ "$age" -lt 0 ] && age=0
