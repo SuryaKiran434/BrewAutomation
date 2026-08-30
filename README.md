@@ -497,6 +497,10 @@ bash -n "$f"                                    # parse-only syntax check
 shellcheck -S warning -e SC1091 *.sh            # warnings and above
 ```
 
+A SonarCloud scan runs after the two lint stages. It is advisory rather than a
+gate — the required check is `Shell lint` alone, so a SonarCloud outage never
+blocks a merge.
+
 `-S warning` is deliberate: style and info notes are advisory on a mature
 script and would have turned the job red on day one for no correctness gain.
 `SC1091` (cannot follow non-constant source) is excluded for the same reason.
