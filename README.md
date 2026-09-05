@@ -14,7 +14,7 @@ Automated Homebrew, uv, and Python package updates on macOS with **hardened secu
 - ✅ **Manual triggers** (immediate updates/restarts with separate logging)
 - ✅ **Log rotation** (automatic 30-day retention for automation logs)
 - ✅ **Timezone watcher** (reloads the schedule when the system timezone changes)
-- ✅ **Shell lint in CI** (`bash -n` + ShellCheck on every push and PR)
+- ✅ **Shell lint in CI** (`bash -n` + ShellCheck on pushes to `main` and every PR)
 
 ---
 
@@ -161,7 +161,7 @@ lock file is missing or unparseable, and only then removes both.
 
 ### Log Management
 - ✅ Automated logs rotate to keep last 30 days (completion markers only)
-- ✅ Manual logs rotate to keep last 500 lines (separate from automation)
+- ✅ The manual run log rotates to keep the last 500 lines (separate from automation)
 - ✅ Error logs cleared on successful automation runs
 - ✅ All log files created with `600` permissions (owner-only readable)
 - ✅ Temporary files created with `600` permissions
@@ -378,7 +378,7 @@ A healthy system shows:
 | `brew_update.log` | Date-based (completion markers only) | Last 30 days |
 | `brew_update_manual.log` | Line-based (last 500 lines) | Latest 500 lines (~50 runs) |
 | `error.log` | Cleared on success, preserved on failure | Current failure or empty |
-| `error_manual.log` | Line-based (last 500 lines) | Latest 500 lines (~50 runs) |
+| `error_manual.log` | None — only the automation run clears its error log | Unbounded |
 | `skips.log` | Line-based (last 100 lines) | Latest 100 lines (~30-50 days) |
 | `brew_update_background.log` | iTerm2 fallback output (no rotation) | Unbounded |
 | `system_stderr.log` | LaunchAgent output (no rotation) | Unbounded |
@@ -406,8 +406,12 @@ All log files are created with `600` permissions (owner-only readable).
 | `reload_restart.sh` | Installer — deploys restart LaunchDaemon, enforces permissions |
 | `.env` | Credentials (gitignored) — Gmail & tool paths |
 | `.gitignore` | Git exclusions — credentials, logs, lock directory, IDE files |
-| `.github/workflows/ci.yml` | Shell lint — `bash -n` + ShellCheck |
-| `.github/dependabot.yml` | Weekly `github-actions` updates |
+| `.github/workflows/ci.yml` | Shell lint — `bash -n` + ShellCheck, then an advisory SonarCloud scan |
+| `.github/workflows/dependabot-auto-merge.yml` | Queues Dependabot's patch/minor PRs to merge once `Shell lint` passes; majors wait for a human |
+| `.github/workflows/slack-notify.yml` | Posts a Slack message on every push (any branch); skips silently if `SLACK_WEBHOOK_URL` is unset |
+| `.github/dependabot.yml` | Weekly `github-actions` updates, minor/patch collapsed into one grouped PR |
+| `sonar-project.properties` | SonarCloud project config for the CI-based scan |
+| `LICENSE` | MIT |
 | `README.md` | This file |
 
 ---
@@ -525,6 +529,26 @@ worth knowing so they are not "tidied" back:
   comment pointing at the lock-file timestamp check that actually enforces the
   rate limit.
 
+### Dependency updates
+
+`.github/dependabot.yml` watches a single ecosystem — `github-actions`. This
+repo is shell scripts plus a stdlib-only `notify.py`, so there is no package
+manifest for anything else to read. Minor and patch bumps are collapsed into
+**one grouped PR per week**; majors are excluded from the group and arrive as
+their own PRs.
+
+`.github/workflows/dependabot-auto-merge.yml` keys on exactly that split. A
+grouped patch/minor PR has auto-merge enabled, so it merges itself once
+`Shell lint` goes green; a major is left open for review. Auto-merge only
+*queues* the merge — a red required check leaves the PR sitting there.
+
+### Other workflows
+
+`.github/workflows/slack-notify.yml` posts a push notification to Slack on
+**every branch**, not just `main`. It is not a gate and not a required check:
+if `SLACK_WEBHOOK_URL` is not set on the repository it prints how to set it and
+exits `0`.
+
 ---
 
 ## Uninstalling
@@ -626,4 +650,4 @@ This project uses `$HOME` for all paths — works on any macOS user account afte
 
 ## License
 
-Personal automation project. No license specified.
+[MIT](LICENSE)
